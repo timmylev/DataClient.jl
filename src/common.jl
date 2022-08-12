@@ -129,7 +129,7 @@ end
 """
     decode_type(str::AbstractString)::Union{DataType,Union}
 
-Decodes the string representation of a DataType or Union.
+Decodes a DataType or Union that was encoded using [`encode_type`](@ref).
 """
 function decode_type(str::AbstractString)::Union{DataType,Union}
     parts = split(str, ":")
