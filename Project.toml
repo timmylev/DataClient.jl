@@ -1,0 +1,43 @@
+name = "DataClient"
+uuid = "a002f9d7-5e3f-4b94-9855-5334a24623d7"
+authors = ["Timothy Levins <timothy.levins@invenia.ca>"]
+version = "1.0.0"
+
+[deps]
+AWS = "fbe9abb3-538b-5e4e-ba9e-bc94f4f92ebc"
+AWSS3 = "1c724243-ef5b-51ab-93f4-b0a88ac62a95"
+CSV = "336ed68f-0bac-5ca0-87d4-7b16caf5d00b"
+DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
+DataStructures = "864edb3b-99cc-5e75-8d2d-829cb0a9cfe8"
+Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
+Exceptions = "25a0344a-2aab-46d0-b534-6f1410d4c65f"
+JSON = "682c06a0-de6a-54ab-a142-c8b1cf79cde6"
+LRUCache = "8ac3fa9e-de4c-5943-b1dc-09c6b5f20637"
+Memento = "f28f55f0-a522-5efc-85c2-fe41dfb9b2d9"
+Memoize = "c03570c3-d221-55d1-a50c-7939bbd78826"
+Mocking = "78c3b35d-d492-501b-9361-3d52fe80e533"
+TimeZones = "f269a46b-ccf7-5d73-abea-4c690281aa53"
+YAML = "ddb6d928-2868-570f-bddf-ab3f9cf99eb6"
+
+[compat]
+AWS = "1.76.0"
+AWSS3 = "0.9.6"
+CSV = "0.10.4"
+DataFrames = "1.3.4"
+DataStructures = "0.18.13"
+Exceptions = "0.1.2"
+JSON = "0.21.3"
+LRUCache = "1.3.0"
+Memento = "1.4.0"
+Memoize = "0.4.4"
+Mocking = "0.7.3"
+TimeZones = "1.8.0"
+YAML = "0.4.7"
+
+[extras]
+HTTP = "cd3eb016-35fb-5094-929b-558a96fad6f3"
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+WeakRefStrings = "ea10d353-3f73-51f8-a26c-33c1cb351aa5"
+
+[targets]
+test = ["HTTP", "Test", "WeakRefStrings"]

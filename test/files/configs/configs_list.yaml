@@ -1,0 +1,4 @@
+additional-stores:
+  - teststore: ffs:s3://my-bucket/my-prefix/
+
+disable-centralized: True

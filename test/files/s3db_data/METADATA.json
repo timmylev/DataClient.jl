@@ -1,0 +1,1 @@
+{"column_order":["target_start","target_end","target_bounds","release_date","region","load","tag"],"column_types":{"target_end":"ZonedDateTime","load":"AbstractFloat","tag":"AbstractString","release_date":"ZonedDateTime","region":"AbstractString","target_bounds":"Integer","target_start":"ZonedDateTime"},"timezone":"America/New_York"}

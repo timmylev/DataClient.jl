@@ -1,0 +1,13 @@
+# This is an example config file.
+
+# (optional) Used to register additional backend stores.
+additional-stores:
+  - myffs: ffs:s3://my-bucket/my-prefix/
+  - miso-nda: ffs:s3://miso-nda/miso-prefix/
+
+# (optional, default=False) Give precedence to 'additional-stores' over any hard-coded centralized
+# stores when using the `gather` operation to search for datasets when a store id is not provided.
+prioritize-additional-stores: True
+
+# (optional, default=False) Disable all hardcoded centralized stores.
+disable-centralized: True
