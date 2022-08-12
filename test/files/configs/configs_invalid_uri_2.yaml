@@ -1,0 +1,2 @@
+additional-stores:
+  - myffs: ffs:s4://my-bucket/my-prefix/

@@ -1,0 +1,5 @@
+additional-stores:
+  - myffs: ffs:s3://my-bucket/my-prefix/
+  - miso-nda: ffs:s3://miso-nda/miso-prefix/
+
+prioritize-additional-stores: True

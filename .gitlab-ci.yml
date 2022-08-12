@@ -1,0 +1,19 @@
+---
+include:
+  - project: invenia/gitlab-ci-helper
+    file: /templates/julia.yml
+
+variables:
+  os: "linux"
+
+"Format Check":
+  extends:
+    - .format_check
+
+"Test":
+  extends:
+    - .test_1_6
+    - .test_docker
+  tags:
+    - linux
+    - docker-ci

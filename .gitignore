@@ -1,0 +1,12 @@
+/Manifest.toml
+/docs/build/
+
+# https://gitlab.invenia.ca/invenia/research/ISOMarketReportParsers.jl/-/issues/12
+__MACOSX
+*.DS_Store
+
+# data
+/data
+/logs
+configs.yaml
+sample.jl
