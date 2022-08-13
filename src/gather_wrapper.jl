@@ -4,14 +4,14 @@
         dataset::AbstractString,
         start_dt::DateTime,
         end_dt::DateTime,
-        store_id::AbstractString,
+        store_id::AbstractString;
         strip_tz::Bool=true,
     )::DataFrame
     gather(
         collection::AbstractString,
         dataset::AbstractString,
         day::Date,
-        store_id::AbstractString,
+        store_id::AbstractString;
         strip_tz::Bool=true,
     )::DataFrame
 
@@ -24,12 +24,12 @@ function gather(
     collection::AbstractString,
     dataset::AbstractString,
     day::Date,
-    store_id::AbstractString,
+    store_id::AbstractString;
     strip_tz::Bool=true,
 )::DataFrame
     start_dt = DateTime(day)
     end_dt = start_dt + Day(1) - Second(1)
-    return gather(collection, dataset, start_dt, end_dt, store_id, strip_tz)
+    return gather(collection, dataset, start_dt, end_dt, store_id; strip_tz=strip_tz)
 end
 
 function gather(
@@ -37,7 +37,7 @@ function gather(
     dataset::AbstractString,
     start_dt::DateTime,
     end_dt::DateTime,
-    store_id::AbstractString,
+    store_id::AbstractString;
     strip_tz::Bool=true,
 )::DataFrame
     store = get_backend(store_id)
@@ -49,22 +49,25 @@ function gather(
     end
 
     tz = metadata.timezone
-    zdt_cols = _get_zdt_cols(metadata)
-
     start_zdt = ZonedDateTime(start_dt, tz)
     end_zdt = ZonedDateTime(end_dt, tz)
+
     df = gather(collection, dataset, start_zdt, end_zdt, store_id)
 
-    for col in zdt_cols
-        # directly strips the timezone without first converting to UTC
-        df[!, col] = DateTime.(df[!, col])
-    end
+    if strip_tz
+        zdt_cols = _get_zdt_cols(metadata)
 
-    warn(
-        LOGGER,
-        "Stripped the tz '$tz' from `ZonedDateTime` columns $zdt_cols to create " *
-        "tz-naive (non-UTC) `DateTime` columns for dataset '$(collection)-$(dataset)'.",
-    )
+        for col in zdt_cols
+            # directly strips the timezone without first converting to UTC
+            df[!, col] = DateTime.(df[!, col])
+        end
+
+        warn(
+            LOGGER,
+            "Stripped the tz '$tz' from `ZonedDateTime` columns $zdt_cols to create " *
+            "tz-naive (non-UTC) `DateTime` columns for dataset '$(collection)-$(dataset)'.",
+        )
+    end
 
     return df
 end
