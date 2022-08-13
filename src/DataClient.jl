@@ -61,4 +61,6 @@ include("list.jl")
 include("gather.jl")
 include("insert.jl")
 
+include("gather_wrapper.jl")
+
 end # module
