@@ -25,7 +25,10 @@ input `DataFrame` has any missing columns or incompatible column types.
 - `store_id`: The backend store id
 
 # Keywords
-- `details`: (Optional) Details about the dataset that will be stored in the backend. It serves no functional purpose. 
+- `details`: (Optional) Details about the dataset that will be stored in the backend.
+    This is solely for informational purposes, it serves no functional purpose.
+    Specifying this when inserting data into an existing dataset will overwrite all
+    previously stored details about the dataset.
 """
 function insert(
     collection::AbstractString,

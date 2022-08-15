@@ -10,17 +10,17 @@
     gather(
         collection::AbstractString,
         dataset::AbstractString,
-        day::Date,
+        date::Date,
         store_id::AbstractString;
         strip_tz::Bool=true,
     )::DataFrame
 
 A convenient way to gather datasets using tz-naive `DateTime`s or `Date` instead of
-`ZonedDateTime`s. Note that a `store_id` must always be provided when querying as such.
+`ZonedDateTime`s. Note that a `store_id` must always be provided when querying this way.
 
 !!! note
-    The tz-naive `DateTime`s or `Date` are actually converted into `ZonedDateTime` in
-    the background using the dataset's stored timezone. 
+    The tz-naive `DateTime`s or `Date` will be converted into `ZonedDateTime`s in
+    the background using the dataset's stored timezone.
 
 An additional `strip_tz` parameter is also available, which when `true` (the default),
 removes the timezone from all `ZonedDateTime` columns in the retrieved `DataFrame`,
@@ -29,11 +29,11 @@ converting the column into a tz-naive `DateTime`.
 function gather(
     collection::AbstractString,
     dataset::AbstractString,
-    day::Date,
+    date::Date,
     store_id::AbstractString;
     strip_tz::Bool=true,
 )::DataFrame
-    start_dt = DateTime(day)
+    start_dt = DateTime(date)
     end_dt = start_dt + Day(1) - Second(1)
     return gather(collection, dataset, start_dt, end_dt, store_id; strip_tz=strip_tz)
 end
@@ -49,7 +49,7 @@ function gather(
     store = get_backend(store_id)
 
     metadata = try
-        get_metadata(collection, dataset, store)
+        @mock get_metadata(collection, dataset, store)
     catch err
         throw(MissingDataError(collection, dataset))
     end
@@ -58,7 +58,7 @@ function gather(
     start_zdt = ZonedDateTime(start_dt, tz)
     end_zdt = ZonedDateTime(end_dt, tz)
 
-    df = gather(collection, dataset, start_zdt, end_zdt, store_id)
+    df = @mock gather(collection, dataset, start_zdt, end_zdt, store_id)
 
     if strip_tz
         zdt_cols = _get_zdt_cols(metadata)

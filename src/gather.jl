@@ -22,7 +22,7 @@ Gathers data from a target dataset as a `DataFrame`.
 
 !!! note "IMPORTANT"
     The `start_dt` and `end_dt` filters are only applied to the `target_start` column of
-    the dataset. The `target_end` column is irrelevant.
+    the dataset. The `target_end` column (if available) is irrelevant.
 
 !!! note
     It is recommended to specify a `store_id` for efficiency reasons. If none is provided,
