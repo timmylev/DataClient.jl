@@ -21,17 +21,22 @@ function insert(
     collection::AbstractString,
     dataset::AbstractString,
     dataframe::DataFrame,
-    store_id::AbstractString,
+    store_id::AbstractString;
+    details::Union{Nothing,Dict{String,String}}=nothing,
 )
     store = get_backend(store_id)
-    return _insert(collection, dataset, dataframe, store)
+    return _insert(collection, dataset, dataframe, store, details)
 end
 
 function _insert(
-    collection::AbstractString, dataset::AbstractString, dataframe::DataFrame, store::FFS
+    collection::AbstractString,
+    dataset::AbstractString,
+    dataframe::DataFrame,
+    store::FFS,
+    details::Union{Nothing,Dict{String,String}},
 )
     _validate(dataframe, store)
-    metadata = @mock _ensure_created(collection, dataset, dataframe, store)
+    metadata = @mock _ensure_created(collection, dataset, dataframe, store, details)
 
     @memoize groupkey(zdt) = zdt2unix(Int, utc_day_floor(zdt))
     # add a group key column
@@ -101,7 +106,11 @@ function _validate(dataframe::DataFrame, ::FFS)
 end
 
 function _ensure_created(
-    collection::AbstractString, dataset::AbstractString, dataframe::DataFrame, store::FFS
+    collection::AbstractString,
+    dataset::AbstractString,
+    dataframe::DataFrame,
+    store::FFS,
+    details::Union{Nothing,Dict{String,String}},
 )::FFSMeta
     metadata = try
         @mock get_metadata(collection, dataset, store)
@@ -112,8 +121,8 @@ function _ensure_created(
 
     ds = "'$collection-$dataset'"
 
-    if !isnothing(metadata)
-        debug(LOGGER, "Found existing metadata for dataset $ds.")
+    to_write = if !isnothing(metadata)
+        debug(LOGGER, "Updating existing metadata for dataset $ds.")
 
         # ensure that all required cols are present, and warn if there are extra cols
         cols_required = metadata.column_order
@@ -153,6 +162,24 @@ function _ensure_created(
             end
         end
 
+        # update the metadata details if needed
+        new_details = if !isnothing(details) && details != metadata.details
+            details
+        else
+            metadata.details
+        end
+
+        FFSMeta(;
+            collection=metadata.collection,
+            dataset=metadata.dataset,
+            store=metadata.store,
+            column_order=metadata.column_order,
+            column_types=metadata.column_types,
+            timezone=metadata.timezone,
+            last_modified=now(tz"UTC"),  # update
+            details=new_details,  # update
+        )
+
     else
         debug(LOGGER, "Metadata for $ds does not exist, creating metadata...")
 
@@ -162,9 +189,19 @@ function _ensure_created(
         )
         tz = dataframe.target_start[1].timezone
 
-        metadata = FFSMeta(collection, dataset, store, column_order, column_types, tz)
-        @mock write_metadata(metadata)
+        FFSMeta(;
+            collection=collection,
+            dataset=dataset,
+            store=store,
+            column_order=column_order,
+            column_types=column_types,
+            timezone=tz,
+            last_modified=now(tz"UTC"),
+            details=details,
+        )
     end
 
-    return metadata
+    @mock write_metadata(to_write)
+
+    return to_write
 end

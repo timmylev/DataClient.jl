@@ -1,4 +1,4 @@
-using AWSS3: s3_put
+using AWSS3: s3_put, s3_get
 using DataClient:
     FFS,
     FFSMeta,
@@ -30,14 +30,14 @@ using WeakRefStrings
 
     @testset "test get_metadata FFS" begin
         # basic test
-        apply(@patch s3_cached_get(bucket::String, key::String) = get_test_data(key)) do
+        apply(@patch s3_get(bucket::String, key::String) = read(get_test_data(key))) do
             coll, ds = "caiso", "test_dataset"
             store = FFS("test-bucket", "test-prefix")
-            expected = FFSMeta(
-                coll,
-                ds,
-                store,
-                [
+            expected = FFSMeta(;
+                collection=coll,
+                dataset=ds,
+                store=store,
+                column_order=[
                     "target_start",
                     "target_end",
                     "target_bounds",
@@ -46,7 +46,7 @@ using WeakRefStrings
                     "load",
                     "tag",
                 ],
-                Dict(
+                column_types=Dict(
                     "target_start" => ZonedDateTime,
                     "target_end" => ZonedDateTime,
                     "target_bounds" => Integer,
@@ -55,7 +55,8 @@ using WeakRefStrings
                     "load" => AbstractFloat,
                     "tag" => AbstractString,
                 ),
-                tz"America/New_York",
+                timezone=tz"America/New_York",
+                last_modified=ZonedDateTime(2022, 1, 1, tz"UTC"),
             )
             evaluated = get_metadata(coll, ds, store)
             @test evaluated.collection == expected.collection
@@ -66,14 +67,16 @@ using WeakRefStrings
         end
 
         # test metadata key error from S3, a MissingDataError should be thrown
-        apply(@patch s3_cached_get(bucket, key) = throw(AwsKeyErr)) do
+        apply(@patch s3_get(bucket::String, key::String) = throw(AwsKeyErr)) do
             coll, ds = "caiso", "test_dataset"
             store = FFS("test-bucket", "test-prefix")
             @test_throws MissingDataError get_metadata(coll, ds, store)
         end
 
         # test metadata non-key error S3, the original error should be thrown
-        apply(@patch s3_cached_get(bucket, key) = get_test_data("missing", AwsOtherErr)) do
+        apply(@patch function s3_get(bucket::String, key::String)
+            return get_test_data("missing", AwsOtherErr)
+        end) do
             coll, ds = "caiso", "test_dataset"
             store = FFS("test-bucket", "test-prefix")
             @test_throws AwsOtherErr get_metadata(coll, ds, store)
@@ -89,11 +92,11 @@ using WeakRefStrings
         apply(patched_s3_put) do
             coll, ds = "caiso", "test_dataset"
             store = FFS("test-bucket", "test-prefix")
-            metadata = FFSMeta(
-                coll,
-                ds,
-                store,
-                [
+            metadata = FFSMeta(;
+                collection=coll,
+                dataset=ds,
+                store=store,
+                column_order=[
                     "target_start",
                     "target_end",
                     "target_bounds",
@@ -102,7 +105,7 @@ using WeakRefStrings
                     "load",
                     "tag",
                 ],
-                Dict(
+                column_types=Dict(
                     "target_start" => ZonedDateTime,
                     "target_end" => ZonedDateTime,
                     "target_bounds" => Integer,
@@ -111,13 +114,16 @@ using WeakRefStrings
                     "load" => AbstractFloat,
                     "tag" => AbstractString,
                 ),
-                tz"America/New_York",
+                timezone=tz"America/New_York",
+                last_modified=ZonedDateTime(2022, 1, 1, tz"UTC"),
             )
             expected = JSON.json(
                 Dict(
                     "column_order" => metadata.column_order,
                     "column_types" => metadata.column_types,
                     "timezone" => metadata.timezone.name,
+                    "last_modified" => 1640995200,
+                    "details" => nothing,
                 ),
             )
             write_metadata(metadata)

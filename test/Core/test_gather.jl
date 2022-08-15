@@ -1,5 +1,7 @@
-using AWSS3: s3_list_keys
+using AWSS3: s3_list_keys, s3_get
 using DataClient:
+    FFS,
+    FFSMeta,
     MissingDataError,
     S3DB,
     _find_s3_files,
@@ -22,8 +24,11 @@ using TimeZones: zdt2unix
     reload_configs(test_config_path)
     STORE = get_backend()["teststore"]
 
+    patched_s3_get = @patch s3_get(bucket::String, key::String) = read(get_test_data(key))
+
     @testset "test _load_s3_files" begin
-        apply(@patch s3_cached_get(bucket, key) = get_test_data(key)) do
+        cached_get = @patch s3_cached_get(bucket, key) = get_test_data(key)
+        apply([patched_s3_get, cached_get]) do
             start_dt = ZonedDateTime(2020, 1, 1, tz"UTC")
             end_dt = ZonedDateTime(2020, 1, 5, tz"UTC")
             # 5 keys will be generated, one for each day
@@ -55,19 +60,22 @@ using TimeZones: zdt2unix
         file_keys = _generate_keys("test-coll", "test-ds", start_dt, end_dt, STORE)
 
         # Missing S3 Key Error are caught and not thrown
-        apply(@patch s3_cached_get(b, k) = get_test_data(k, AwsKeyErr)) do
+        cached_get = @patch s3_cached_get(b, k) = get_test_data(k, AwsKeyErr)
+        apply([patched_s3_get, cached_get]) do
             df = _load_s3_files(file_keys, "test-coll", "test-ds", start_dt, end_dt, STORE)
         end
 
         # Other Errors are thrown
-        apply(@patch s3_cached_get(b, k) = get_test_data(k, AwsOtherErr)) do
+        cached_get = @patch s3_cached_get(b, k) = get_test_data(k, AwsOtherErr)
+        apply([patched_s3_get, cached_get]) do
             @test_throws AwsOtherErr _load_s3_files(
                 file_keys, "test-coll", "test-ds", start_dt, end_dt, STORE
             )
         end
 
         # returns an empty DataFrame if no data is found
-        apply(@patch s3_cached_get(b, k) = get_test_data(k, AwsKeyErr)) do
+        cached_get = @patch s3_cached_get(b, k) = get_test_data(k, AwsKeyErr)
+        apply([patched_s3_get, cached_get]) do
             start_dt = ZonedDateTime(2020, 1, 6, tz"UTC")
             file_keys = _generate_keys("test-coll", "test-ds", start_dt, end_dt, STORE)
             df = _load_s3_files(file_keys, "test-coll", "test-ds", start_dt, end_dt, STORE)
@@ -126,15 +134,19 @@ using TimeZones: zdt2unix
             "target_end" => zdt2unix.(Int, zdts),
         )
 
-        coll = "test-coll"
-        ds = "test-ds"
-        store = FFS("buck", "prex")
-        column_order = names(df)
-        column_types = Dict(
-            "target_start" => ZonedDateTime, "release_date" => Int64, "target_end" => Int64
+        metadata = FFSMeta(;
+            collection="test-coll",
+            dataset="test-ds",
+            store=FFS("buck", "prex"),
+            column_order=names(df),
+            column_types=Dict(
+                "target_start" => ZonedDateTime,
+                "release_date" => Int64,
+                "target_end" => Int64,
+            ),
+            timezone=tz"America/New_York",
+            last_modified=ZonedDateTime(2022, 1, 1, tz"UTC"),
         )
-        tz = tz"America/New_York"
-        metadata = DataClient.FFSMeta(coll, ds, store, column_order, column_types, tz)
 
         _process_dataframe!(df, metadata)
         # show that only 'target_start' is decoded (because of the column types)

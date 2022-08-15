@@ -68,13 +68,15 @@ end
 
 Metadata for a [`FFS`](@ref) dataset.
 """
-struct FFSMeta <: Metadata
+Base.@kwdef struct FFSMeta <: Metadata
     collection::String
     dataset::String
     store::FFS
     column_order::Vector{String}
     column_types::Dict{String,DataType}
     timezone::TimeZone
+    last_modified::ZonedDateTime
+    details::Union{Nothing,Dict{String,String}} = nothing
 end
 
 """
@@ -96,11 +98,20 @@ function get_metadata(coll::String, ds::String, store::FFS)::FFSMeta
     s3_key = generate_s3_metadata_key(coll, ds, store)
 
     try
-        file = @mock s3_cached_get(store.bucket, s3_key)
-        data = JSON.parse(read(file, String))
+        bytes = @mock s3_get(store.bucket, s3_key)
+        data = JSON.parse(String(bytes))
         tz = TimeZone(data["timezone"])
         column_types = Dict(k => decode_type(v) for (k, v) in pairs(data["column_types"]))
-        return FFSMeta(coll, ds, store, data["column_order"], column_types, tz)
+        return FFSMeta(
+            collection=coll,
+            dataset=ds,
+            store=store,
+            column_order=data["column_order"],
+            column_types=column_types,
+            timezone=tz,
+            last_modified=unix2zdt(data["last_modified"]),
+            details=data["details"],
+        )
     catch err
         if isa(err, AWSException) && err.code == "NoSuchKey"
             throw(MissingDataError(coll, ds))
@@ -121,6 +132,8 @@ function write_metadata(metadata::FFSMeta)
         "column_order" => metadata.column_order,
         "column_types" => Dict(k => encode_type(v) for (k, v) in metadata.column_types),
         "timezone" => metadata.timezone.name,
+        "last_modified" => zdt2unix(Int, metadata.last_modified),
+        "details" => metadata.details,
     )
     @mock s3_put(metadata.store.bucket, s3key, JSON.json(data))
     return nothing
