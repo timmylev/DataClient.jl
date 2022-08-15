@@ -102,7 +102,7 @@ function get_metadata(coll::String, ds::String, store::FFS)::FFSMeta
         data = JSON.parse(String(bytes))
         tz = TimeZone(data["timezone"])
         column_types = Dict(k => decode_type(v) for (k, v) in pairs(data["column_types"]))
-        return FFSMeta(
+        return FFSMeta(;
             collection=coll,
             dataset=ds,
             store=store,
