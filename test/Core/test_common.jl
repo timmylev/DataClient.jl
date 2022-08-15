@@ -144,6 +144,7 @@ using WeakRefStrings
             DateTime => "DateTime",
             Bool => "Bool",
             Char => "Char",
+            Union{Missing,Int64,Int32} => "Union:Missing:Integer",
         )
 
         for (data_type, str) in pairs(expected)
@@ -158,6 +159,7 @@ using WeakRefStrings
             "DateTime" => DateTime,
             "Bool" => Bool,
             "Char" => Char,
+            "Union:Missing:Integer" => Union{Missing,Integer},
         )
 
         for (str, data_type) in pairs(expected)
@@ -168,6 +170,10 @@ using WeakRefStrings
         unknown = "UnknownType"
         @test_throws ErrorException("Unable to decode custom type '$unknown'.") decode_type(
             unknown
+        )
+        unknown2 = "NotUnion:Missing:Integer"
+        @test_throws ErrorException("Unable to decode custom type '$unknown2'.") decode_type(
+            unknown2
         )
     end
 

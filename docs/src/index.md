@@ -9,6 +9,7 @@ Note: The DataClient does not handle identity and access management (IAM), so an
 Pages = [
     "man/getting-started.md",
     "man/configs.md",
+    "man/demos.md",
     "man/developer-notes.md",
 ]
 Depth = 2

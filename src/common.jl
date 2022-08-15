@@ -73,7 +73,7 @@ Base.@kwdef struct FFSMeta <: Metadata
     dataset::String
     store::FFS
     column_order::Vector{String}
-    column_types::Dict{String,DataType}
+    column_types::Dict{String,Union{DataType,Union}}
     timezone::TimeZone
     last_modified::ZonedDateTime
     details::Union{Nothing,Dict{String,String}} = nothing
@@ -140,22 +140,32 @@ function write_metadata(metadata::FFSMeta)
 end
 
 """
-    decode_type(str::AbstractString)::DataType
+    decode_type(str::AbstractString)::Union{DataType,Union}
 
-Decodes the string representation of a DataType.
+Decodes a DataType or Union that was encoded using [`encode_type`](@ref).
 """
-function decode_type(str::AbstractString)::DataType
-    try
-        return haskey(CUSTOM_TYPES, str) ? CUSTOM_TYPES[str] : getfield(Base, Symbol(str))
-    catch err
+function decode_type(str::AbstractString)::Union{DataType,Union}
+    parts = split(str, ":")
+    if length(parts) == 1
+        el = parts[1]
+        try
+            return haskey(CUSTOM_TYPES, el) ? CUSTOM_TYPES[el] : getfield(Base, Symbol(el))
+        catch err
+            throw(ErrorException("Unable to decode custom type '$el'."))
+        end
+    elseif parts[1] == "Union"
+        # recurse
+        return eval(Expr(:curly, [Symbol(decode_type(el)) for el in parts]...))
+    else
         throw(ErrorException("Unable to decode custom type '$str'."))
     end
 end
 
 """
-    encode_type(str::AbstractString)::DataType
+    encode_type(data_type::DataType)::String
+    encode_type(data_type::Union)::String
 
-Encodes a DataType as a String.
+Encodes a DataType or Union as a String.
 In some cases, a generic Abstract type is used instead of specific concrete types.
 """
 function encode_type(data_type::DataType)::String
@@ -173,13 +183,18 @@ function encode_type(data_type::DataType)::String
     end
 end
 
+function encode_type(data_type::Union)::String
+    parts = Set([encode_type(el) for el in Base.uniontypes(data_type)])
+    return join(["Union", parts...], ":")
+end
+
 """
-    sanitize_type(data_type::DataType)::DataType
+    sanitize_type(data_type::Union{DataType,Union})::Union{DataType,Union}
 
 Encodes and then decodes a DataType. This may result in an abstract type of the original
 input type. See [`encode_type`](@ref) for more info.
 """
-function sanitize_type(data_type::DataType)::DataType
+function sanitize_type(data_type::Union{DataType,Union})::Union{DataType,Union}
     return decode_type(encode_type(data_type))
 end
 
