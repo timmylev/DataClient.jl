@@ -5,7 +5,8 @@ using TimeZones: zdt2unix
         collection::AbstractString,
         dataset::AbstractString,
         dataframe::DataFrame,
-        store_id::AbstractString,
+        store_id::AbstractString;
+        details::Union{Nothing,Dict{String,String}}=nothing,
     )
 
 Inserts a `DataFrame` to a new or existing dataset in the specified store.
@@ -16,6 +17,15 @@ The insert operation is only supported for [`FFS`](@ref)-type stores. The input
 If inserting data into an existing dataset, the input `DataFrame` will be merged and
 deduplicated with any pre-existing data within the dataset. The process will fail if the
 input `DataFrame` has any missing columns or incompatible column types.
+
+# Arguments
+- `collection`: The name of the dataset's collection
+- `dataset`: The name of the dataset
+- `dataframe`: The input `DataFrame` that is to be stored
+- `store_id`: The backend store id
+
+# Keywords
+- `details`: (Optional) Details about the dataset that will be stored in the backend. It serves no functional purpose. 
 """
 function insert(
     collection::AbstractString,

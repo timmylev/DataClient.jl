@@ -13,14 +13,22 @@ using TimeZones: zdt2unix
 
 Gathers data from a target dataset as a `DataFrame`.
 
-It is recommended to specify a `store_id` for efficiency reasons. If none is provided,
-each available store will be iteratively checked in order of precedence until the first
-store containing the target dataset is found. Refer to [Configs and Backend](@ref) for
-more info about store precedence.
+# Arguments
+- `collection`: The name of the dataset's collection
+- `dataset`: The name of the dataset
+- `start_dt`: The start bound (inclusive) of the `target_start` column .
+- `end_dt`: The end bound (inclusive) for the `target_start` column.
+- `store_id`: (Optional) The backend store id.
 
 !!! note "IMPORTANT"
     The `start_dt` and `end_dt` filters are only applied to the `target_start` column of
     the dataset. The `target_end` column is irrelevant.
+
+!!! note
+    It is recommended to specify a `store_id` for efficiency reasons. If none is provided,
+    each available store will be iteratively checked in order of precedence until the first
+    store containing the target dataset is found. Refer to [Configs and Backend](@ref) for
+    more info about store precedence.
 """
 function gather(
     collection::AbstractString,

@@ -15,10 +15,16 @@
         strip_tz::Bool=true,
     )::DataFrame
 
-An alternative way to gather datasets using tz-naive `DateTime`s or `Date`.
+A convenient way to gather datasets using tz-naive `DateTime`s or `Date` instead of
+`ZonedDateTime`s. Note that a `store_id` must always be provided when querying as such.
 
-A `store_id` must always be specified. If `strip_tz=true`, any `ZonedDateTime`
-columns in the retrieved `DataFrame` will be converted into tz-naive `DateTime`s.
+!!! note
+    The tz-naive `DateTime`s or `Date` are actually converted into `ZonedDateTime` in
+    the background using the dataset's stored timezone. 
+
+An additional `strip_tz` parameter is also available, which when `true` (the default),
+removes the timezone from all `ZonedDateTime` columns in the retrieved `DataFrame`,
+converting the column into a tz-naive `DateTime`.
 """
 function gather(
     collection::AbstractString,
