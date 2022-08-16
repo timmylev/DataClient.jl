@@ -1,4 +1,4 @@
-using DataClient: FFSMeta, get_metadata
+using DataClient: FFSMeta, S3DB, _get_zdt_cols, get_metadata
 using DataFrames
 using Dates
 using TimeZones
@@ -103,5 +103,11 @@ using TimeZones: zdt2unix
             @test eltype(df.target_start) == ZonedDateTime
             @test eltype(df.target_end) == ZonedDateTime
         end
+    end
+
+    @testset "test _get_zdt_cols" begin
+        store = get_metadata("miso", "day_ahead_lmp", S3DB("bucket", "prefix"))
+        # These are hard coded constants, simply testing for 100% coverage
+        @test _get_zdt_cols(store) == ["target_start", "target_end", "release_date"]
     end
 end
