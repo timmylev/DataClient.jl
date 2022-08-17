@@ -68,7 +68,7 @@ function gather(
             df[!, col] = DateTime.(df[!, col])
         end
 
-        warn(
+        info(
             LOGGER,
             "Stripped the tz '$tz' from `ZonedDateTime` columns $zdt_cols to create " *
             "tz-naive (non-UTC) `DateTime` columns for dataset '$(collection)-$(dataset)'.",

@@ -63,6 +63,7 @@ using TimeZones: zdt2unix
         cached_get = @patch s3_cached_get(b, k) = get_test_data(k, AwsKeyErr)
         apply([patched_s3_get, cached_get]) do
             df = _load_s3_files(file_keys, "test-coll", "test-ds", start_dt, end_dt, STORE)
+            @test !isempty(df)
         end
 
         # Other Errors are thrown
