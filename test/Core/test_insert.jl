@@ -57,7 +57,7 @@ using TimeZones
             "val_b" => Vector{String}(["abc"]),
         )
 
-        function gen_metadata(required_cols=column_order)
+        function gen_metadata(required_cols=column_order; details=nothing)
             return FFSMeta(;
                 collection=coll,
                 dataset=ds,
@@ -66,6 +66,7 @@ using TimeZones
                 column_types=column_types,
                 timezone=tz,
                 last_modified=freezed_now,
+                details=details,
             )
         end
 
@@ -150,6 +151,27 @@ using TimeZones
                 df.val_a = convert.(UInt8, df[!, :val_a])
                 # no error is thrown
                 _ensure_created(coll, ds, df, dummy_ffs, nothing)
+            end
+        end
+
+        @testset "test existing_dataset: modify dataset details" begin
+            # tracks the argumnent to mocked `write_metadata` function
+            CALLED_WITH = Dict{String,Any}()
+            patch_write = @patch function write_metadata(metadata)
+                return CALLED_WITH["metadata"] = metadata
+            end
+
+            # existing details of the dataset
+            old_details = Dict("k1" => "old", "k2" => "old")
+            patch_get = @patch get_metadata(args...) = gen_metadata(; details=old_details)
+
+            apply([patch_write, patch_get]) do
+                to_update = Dict("k2" => "new", "k3" => "new")
+                expected = Dict("k1" => "old", "k2" => "new", "k3" => "new")
+
+                _ensure_created(coll, ds, test_df, dummy_ffs, to_update)
+
+                @test CALLED_WITH["metadata"].details == expected
             end
         end
     end

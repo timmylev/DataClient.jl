@@ -175,6 +175,15 @@ function _ensure_created(
             end
         end
 
+        # update the datasets details if applicable
+        new_details = if isnothing(metadata.details)
+            details
+        elseif !isnothing(details)
+            merge!(metadata.details, details)
+        else
+            metadata.details
+        end
+
         FFSMeta(;
             collection=metadata.collection,
             dataset=metadata.dataset,
@@ -183,7 +192,7 @@ function _ensure_created(
             column_types=metadata.column_types,
             timezone=metadata.timezone,
             last_modified=now(tz"UTC"),  # update
-            details=!isnothing(details) ? details : metadata.details,  # update
+            details=new_details,
         )
 
     else
