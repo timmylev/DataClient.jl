@@ -27,8 +27,8 @@ input `DataFrame` has any missing columns or incompatible column types.
 # Keywords
 - `details`: (Optional) Details about the dataset that will be stored in the backend.
     This is solely for informational purposes, it serves no functional purpose.
-    Specifying this when inserting data into an existing dataset will overwrite all
-    previously stored details about the dataset.
+    Specifying this when inserting data into an existing dataset will merge in any new
+    or updated details.
 """
 function insert(
     collection::AbstractString,
