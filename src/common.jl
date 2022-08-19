@@ -98,8 +98,8 @@ function get_metadata(coll::String, ds::String, store::FFS)::FFSMeta
     s3_key = generate_s3_metadata_key(coll, ds, store)
 
     try
-        bytes = @mock s3_get(store.bucket, s3_key)
-        data = JSON.parse(String(bytes))
+        file = @mock s3_cached_get(store.bucket, s3_key)
+        data = JSON.parse(read(file, String))
         tz = TimeZone(data["timezone"])
         column_types = Dict(k => decode_type(v) for (k, v) in pairs(data["column_types"]))
         return FFSMeta(;

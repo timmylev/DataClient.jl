@@ -30,7 +30,7 @@ using WeakRefStrings
 
     @testset "test get_metadata FFS" begin
         # basic test
-        apply(@patch s3_get(bucket::String, key::String) = read(get_test_data(key))) do
+        apply(@patch s3_cached_get(bucket::String, key::String) = get_test_data(key)) do
             coll, ds = "caiso", "test_dataset"
             store = FFS("test-bucket", "test-prefix")
             expected = FFSMeta(;
@@ -67,16 +67,14 @@ using WeakRefStrings
         end
 
         # test metadata key error from S3, a MissingDataError should be thrown
-        apply(@patch s3_get(bucket::String, key::String) = throw(AwsKeyErr)) do
+        apply(@patch s3_cached_get(bucket::String, key::String) = throw(AwsKeyErr)) do
             coll, ds = "caiso", "test_dataset"
             store = FFS("test-bucket", "test-prefix")
             @test_throws MissingDataError get_metadata(coll, ds, store)
         end
 
         # test metadata non-key error S3, the original error should be thrown
-        apply(@patch function s3_get(bucket::String, key::String)
-            return get_test_data("missing", AwsOtherErr)
-        end) do
+        apply(@patch s3_cached_get(bucket::String, key::String) = throw(AwsOtherErr)) do
             coll, ds = "caiso", "test_dataset"
             store = FFS("test-bucket", "test-prefix")
             @test_throws AwsOtherErr get_metadata(coll, ds, store)
