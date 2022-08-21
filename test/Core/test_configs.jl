@@ -7,9 +7,7 @@ using DataStructures
     @testset "test configs - missing config file" begin
         # We've not added a config file to the default config path in tests, so only
         # hard-coded centralized stores will be available.
-        @test get_backend() == OrderedDict{String,DataClient.Store}(
-            "datafeeds" => S3DB("invenia-datafeeds-output", "version5/aurora/gz/")
-        )
+        @test "datafeeds" in keys(get_backend())
         @test get_backend("datafeeds") ==
             S3DB("invenia-datafeeds-output", "version5/aurora/gz/")
     end
@@ -17,11 +15,7 @@ using DataStructures
     @testset "test configs - valid config file" begin
         reload_configs(joinpath(cfg_prefix, "configs_valid.yaml"))
 
-        @test get_backend() == OrderedDict{String,DataClient.Store}(
-            "datafeeds" => S3DB("invenia-datafeeds-output", "version5/aurora/gz/"),
-            "miso-nda" => FFS("miso-nda", "miso-prefix/"),
-            "myffs" => FFS("my-bucket", "my-prefix/"),
-        )
+        @test "myffs" in keys(get_backend())
         @test get_backend("myffs") == FFS("my-bucket", "my-prefix/")
     end
 
@@ -37,11 +31,7 @@ using DataStructures
     @testset "test configs - prioritize additional stores" begin
         reload_configs(joinpath(cfg_prefix, "configs_prioritize_additional.yaml"))
 
-        @test get_backend() == OrderedDict{String,DataClient.Store}(
-            "miso-nda" => FFS("miso-nda", "miso-prefix/"),
-            "myffs" => FFS("my-bucket", "my-prefix/"),
-            "datafeeds" => S3DB("invenia-datafeeds-output", "version5/aurora/gz/"),
-        )
+        @test collect(get_backend())[1][1] == "myffs"
     end
 
     @testset "test configs - invalid configs" begin
