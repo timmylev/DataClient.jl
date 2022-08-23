@@ -10,6 +10,7 @@ Pages = [
     "man/getting-started.md",
     "man/configs.md",
     "man/demos.md",
+    "man/gotchas.md",
     "man/developer-notes.md",
 ]
 Depth = 2

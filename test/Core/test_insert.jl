@@ -34,7 +34,10 @@ using TimeZones
     end
 
     @testset "test _ensure_created" begin
+        freezed_now = now(tz"UTC")
+
         patched_write = @patch write_metadata(meta) = nothing
+        patched_now = @patch now(tz::TimeZone) = freezed_now
 
         coll = "collection"
         ds = "dataset"
@@ -54,18 +57,31 @@ using TimeZones
             "val_b" => Vector{String}(["abc"]),
         )
 
-        expected = FFSMeta(coll, ds, dummy_ffs, column_order, column_types, tz)
+        function gen_metadata(required_cols=column_order; details=nothing)
+            return FFSMeta(;
+                collection=coll,
+                dataset=ds,
+                store=dummy_ffs,
+                column_order=required_cols,
+                column_types=column_types,
+                timezone=tz,
+                last_modified=freezed_now,
+                details=details,
+            )
+        end
+
+        expected = gen_metadata()
 
         @testset "test new_dataset" begin
             patched_get = @patch get_metadata(args...) = throw(MissingDataError(coll, ds))
 
-            apply([patched_get, patched_write]) do
+            apply([patched_get, patched_write, patched_now]) do
                 evaluated = Memento.setlevel!(DC_LOGGER, "debug") do
                     @test_log(
                         DC_LOGGER,
                         "debug",
                         "Metadata for '$coll-$ds' does not exist, creating metadata...",
-                        _ensure_created(coll, ds, test_df, dummy_ffs),
+                        _ensure_created(coll, ds, test_df, dummy_ffs, nothing),
                     )
                 end
 
@@ -80,13 +96,13 @@ using TimeZones
         @testset "test existing_dataset: valid" begin
             patched_get = @patch get_metadata(args...) = expected
 
-            apply([patched_get, patched_write]) do
+            apply([patched_get, patched_write, patched_now]) do
                 evaluated = Memento.setlevel!(DC_LOGGER, "debug") do
                     @test_log(
                         DC_LOGGER,
                         "debug",
-                        "Found existing metadata for dataset '$coll-$ds'.",
-                        _ensure_created(coll, ds, test_df, dummy_ffs),
+                        "Updating existing metadata for dataset '$coll-$ds'.",
+                        _ensure_created(coll, ds, test_df, dummy_ffs, nothing),
                     )
                 end
             end
@@ -94,22 +110,18 @@ using TimeZones
 
         @testset "test existing_dataset: required cols missing" begin
             required_cols = [column_order..., "new_column"]
-            patched_get = @patch function get_metadata(args...)
-                return FFSMeta(coll, ds, dummy_ffs, required_cols, column_types, tz)
-            end
+            patched_get = @patch get_metadata(args...) = gen_metadata(required_cols)
 
-            apply([patched_get, patched_write]) do
+            apply([patched_get, patched_write, patched_now]) do
                 @test_throws DataFrameError(
                     "Missing required columns [\"new_column\"] for existing dataset '$coll-$ds'.",
-                ) _ensure_created(coll, ds, test_df, dummy_ffs)
+                ) _ensure_created(coll, ds, test_df, dummy_ffs, nothing)
             end
         end
 
         @testset "test existing_dataset: extra cols found" begin
             required_cols = [column_order[1:(end - 1)]...]
-            patched_get = @patch function get_metadata(args...)
-                return FFSMeta(coll, ds, dummy_ffs, required_cols, column_types, tz)
-            end
+            patched_get = @patch get_metadata(args...) = gen_metadata(required_cols)
 
             apply([patched_get, patched_write]) do
                 @test_log(
@@ -117,7 +129,7 @@ using TimeZones
                     "warn",
                     "Extra columns [\"val_b\"] found in the input DataFrame for " *
                         "existing dataset '$coll-$ds' will be ignored.",
-                    _ensure_created(coll, ds, test_df, dummy_ffs),
+                    _ensure_created(coll, ds, test_df, dummy_ffs, nothing),
                 )
             end
         end
@@ -132,24 +144,45 @@ using TimeZones
                 @test_throws DataFrameError(
                     "The input DataFrame column 'val_a' has type 'ZonedDateTime' " *
                     "which is incompatible with the existing stored type of 'Integer'",
-                ) _ensure_created(coll, ds, df, dummy_ffs)
+                ) _ensure_created(coll, ds, df, dummy_ffs, nothing)
 
                 # test using a DF with different but still compatible column types
                 df = copy(test_df)
                 df.val_a = convert.(UInt8, df[!, :val_a])
                 # no error is thrown
-                _ensure_created(coll, ds, df, dummy_ffs)
+                _ensure_created(coll, ds, df, dummy_ffs, nothing)
+            end
+        end
+
+        @testset "test existing_dataset: modify dataset details" begin
+            # tracks the argumnent to mocked `write_metadata` function
+            CALLED_WITH = Dict{String,Any}()
+            patch_write = @patch function write_metadata(metadata)
+                return CALLED_WITH["metadata"] = metadata
+            end
+
+            # existing details of the dataset
+            old_details = Dict("k1" => "old", "k2" => "old")
+            patch_get = @patch get_metadata(args...) = gen_metadata(; details=old_details)
+
+            apply([patch_write, patch_get]) do
+                to_update = Dict("k2" => "new", "k3" => "new")
+                expected = Dict("k1" => "old", "k2" => "new", "k3" => "new")
+
+                _ensure_created(coll, ds, test_df, dummy_ffs, to_update)
+
+                @test CALLED_WITH["metadata"].details == expected
             end
         end
     end
 
     @testset "test _merge" begin
         tz = tz"America/New_York"
-        metadata = FFSMeta(
-            "test-coll",
-            "test-ds",
-            FFS("test-bucket", "test-prefix"),
-            [
+        metadata = FFSMeta(;
+            collection="test-coll",
+            dataset="test-ds",
+            store=FFS("test-bucket", "test-prefix"),
+            column_order=[
                 "target_start",
                 "target_end",
                 "target_bounds",
@@ -158,16 +191,17 @@ using TimeZones
                 "load",
                 "tag",
             ],
-            Dict(
+            column_types=Dict(
                 "target_start" => ZonedDateTime,
                 "target_end" => ZonedDateTime,
-                "target_bounds" => Int64,
+                "target_bounds" => Integer,
                 "release_date" => ZonedDateTime,
                 "region" => AbstractString,
                 "load" => AbstractFloat,
                 "tag" => AbstractString,
             ),
-            tz,
+            timezone=tz,
+            last_modified=ZonedDateTime(2022, 1, 1, tz"UTC"),
         )
 
         STORED = Ref{DataFrame}()

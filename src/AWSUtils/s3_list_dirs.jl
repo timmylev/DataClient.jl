@@ -5,7 +5,7 @@
 
 Lists a single level (non-recursive) of "sub-directories" in an S3 bucket.
 
-!!!note
+!!! note
     Sub-directories don't actually exist in an S3 bucket, they are simply S3 Key
     prefixes delimitered by "/".
 

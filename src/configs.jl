@@ -6,7 +6,7 @@ const BACKENDS = Ref{OrderedDict{String,Store}}(OrderedDict())
 
 Reloads the config file using the latest config file path into memory.
 
-Refer to 'Configs and Backend' in the package docs for more info about config files.
+Refer to [Configs and Backend](@ref) for more info about config files.
 """
 function reload_configs()
     empty!(BACKENDS[])
@@ -19,7 +19,7 @@ end
 
 Updates the config file path and reloads the config file into memory.
 
-Refer to 'Configs and Backend' in the package docs for more info about config files
+Refer to [Configs and Backend](@ref) for more info about config files
 """
 function reload_configs(path::String)
     _set_config_path!(path)
@@ -49,7 +49,7 @@ _get_config_path() = CONFIG_PATH[]
 
 Gets all registered backend stores and their respective configs.
 
-Refer to 'Configs and Backend' in the package docs for more info about backend stores.
+Refer to [Configs and Backend](@ref) for more info about backend stores.
 """
 function get_backend()::OrderedDict{String,Store}
     if isempty(BACKENDS[])
@@ -108,7 +108,7 @@ end
 
 Gets the backend store configs of the given store id.
 
-Refer to 'Configs and Backend' in the package docs for more info about backend stores.
+Refer to [Configs and Backend](@ref) for more info about backend stores.
 """
 function get_backend(store_id::String)::Store
     backend = get_backend()

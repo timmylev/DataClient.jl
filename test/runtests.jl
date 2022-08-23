@@ -17,4 +17,5 @@ Mocking.activate()
     include("Core/test_list.jl")
     include("Core/test_gather.jl")
     include("Core/test_insert.jl")
+    include("Core/test_gather_wrapper.jl")
 end
