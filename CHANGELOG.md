@@ -3,7 +3,7 @@
 ## Version 1.3.0
 
 ### Features
-!5](https://gitlab.invenia.ca/invenia/Datafeeds/DataClient.jl/-/merge_requests/5)
+[!5](https://gitlab.invenia.ca/invenia/Datafeeds/DataClient.jl/-/merge_requests/5)
 * Add timing trace logs for `gather`
 * Optimize DataFrame `vcat` in `gather`
 
