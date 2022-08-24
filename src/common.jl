@@ -275,6 +275,6 @@ function generate_s3_metadata_key(
     return joinpath(store.prefix, collection, dataset, "METADATA.json")
 end
 
-function s_fmt(s::Union{Integer,AbstractFloat})::CompoundPeriod
+function s_fmt(s::Union{Integer,AbstractFloat})::Dates.CompoundPeriod
     return canonicalize(Millisecond(trunc(Int, s * 1000)))
 end
