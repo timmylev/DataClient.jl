@@ -73,13 +73,22 @@ function _gather(
 )::DataFrame
     # - If grabbing many files, do a s3-list first to filter out missing files.
     # - If grabbing a few files, it's faster to skip the list and attempt to s3-get directly.
-    file_keys = if end_dt - start_dt > Day(10)
+    t1 = @elapsed file_keys = if end_dt - start_dt > Day(10)
         @mock _find_s3_files(collection, dataset, start_dt, end_dt, store)
     else
         @mock _generate_keys(collection, dataset, start_dt, end_dt, store)
     end
 
-    return @mock _load_s3_files(file_keys, collection, dataset, start_dt, end_dt, store)
+    ds = "'$collection.$dataset'"
+    num_keys = length(file_keys)
+    debug(LOGGER, "Searching for $num_keys file keys from $ds took ($(s_fmt(t1)))")
+
+    t2 = @elapsed results = @mock _load_s3_files(
+        file_keys, collection, dataset, start_dt, end_dt, store
+    )
+    debug(LOGGER, "Loading and merging $num_keys files from $ds took ($(s_fmt(t2)))")
+
+    return results
 end
 
 function _find_s3_files(
@@ -91,12 +100,6 @@ function _find_s3_files(
 )::Vector{String}
     collection_prefix = joinpath(store.prefix, collection, dataset, "")
 
-    debug(
-        LOGGER,
-        "Searching for dataset '$(collection)-$(dataset)' on range " *
-        "[$(start_dt), $(end_dt)] in '$(collection_prefix)'...",
-    )
-
     # - S3DB data is partitioned into 24-hr files
     # - S3DB files are named after unix timestamps (start of day utc)
     # - S3DB files are grouped into yearly directories
@@ -106,7 +109,7 @@ function _find_s3_files(
     end_day_unix = zdt2unix(Int, end_day_utc)
 
     dataset_dirs = [
-        joinpath(collection_prefix, "year=$(year)", "") for
+        joinpath(collection_prefix, "year=$year", "") for
         year in range(Dates.year(start_day_utc), Dates.year(end_day_utc); step=1)
     ]
 
@@ -122,10 +125,10 @@ function _find_s3_files(
         end
     end
 
-    debug(
+    trace(
         LOGGER,
-        "Found $(length(file_keys)) files for dataset '$(collection)-$(dataset)' in " *
-        "range [$(start_dt), $(end_dt)]\n - $(join(file_keys, "\n - "))",
+        "Found $(length(file_keys)) file keys for dataset '$collection.$dataset' in " *
+        "range [$start_dt, $end_dt]\n - $(join(file_keys, "\n - "))",
     )
 
     return file_keys
@@ -148,10 +151,10 @@ function _generate_keys(
         dt in range(utc_day_floor(start_dt), utc_day_floor(end_dt); step=Day(1))
     ]
 
-    debug(
+    trace(
         LOGGER,
-        "Generated $(length(file_keys)) keys for dataset '$(collection)-$(dataset)' in" *
-        " range [$(start_dt), $(end_dt)]\n - $(join(file_keys, "\n - "))",
+        "Generated $(length(file_keys)) file keys for dataset '$collection-$dataset'" *
+        "in range [$start_dt, $end_dt]\n - $(join(file_keys, "\n - "))",
     )
 
     return file_keys
@@ -172,38 +175,72 @@ function _load_s3_files(
     start_day_unix = zdt2unix(Int, utc_day_floor(start_dt))
     end_day_unix = zdt2unix(Int, utc_day_floor(end_dt))
 
-    metadata = get_metadata(collection, dataset, store)
+    ds = "'$collection.$dataset'"
 
-    asyncmap(file_keys; ntasks=8) do key
-        file = nothing
+    t_meta = @elapsed metadata = get_metadata(collection, dataset, store)
+    trace(LOGGER, "Retrieving $ds metadata took ($(s_fmt(t_meta)))")
 
-        try
-            file = @mock s3_cached_get(store.bucket, key)
-        catch err
-            isa(err, AWSException) && err.code == "NoSuchKey" || throw(err)
-            debug(LOGGER, "S3 object '$key' not found.")
-        finally
-            if !isnothing(file)
-                df = DataFrame(CSV.File(file))
+    # Track the time taken to load and process the DataFrame in the @sync loop after
+    # downloading the file. This should cover the majority of the time where actual compute
+    # is being done. The remainder of time should be a good approximate of the idle IO time,
+    # i.e. time that is spent waiting for downloads and not doing anything else.
+    t_df_loads = []
+    t_df_xforms = []
 
-                # trim the first as last files if they contain extra data
-                file_date = get_s3_file_timestamp(key)
-                if file_date == start_day_unix || file_date == end_day_unix
-                    filter!(:target_start => ts -> ts >= start_unix && ts <= end_unix, df)
+    t_tot = @elapsed begin
+        asyncmap(file_keys; ntasks=8) do key
+            file = nothing
+
+            try
+                file = @mock s3_cached_get(store.bucket, key)
+            catch err
+                isa(err, AWSException) && err.code == "NoSuchKey" || throw(err)
+                debug(LOGGER, "S3 object '$key' not found.")
+            finally
+                if !isnothing(file)
+                    t = @elapsed df = DataFrame(CSV.File(file))
+                    push!(t_df_loads, t)
+
+                    t = @elapsed begin
+                        # trim the first as last files if they contain extra data
+                        file_date = get_s3_file_timestamp(key)
+                        if file_date == start_day_unix || file_date == end_day_unix
+                            filter!(
+                                :target_start => ts -> ts >= start_unix && ts <= end_unix,
+                                df,
+                            )
+                        end
+
+                        _process_dataframe!(df, metadata)
+
+                        dfs[file_date] = df
+                    end
+                    push!(t_df_xforms, t)
                 end
-
-                _process_dataframe!(df, metadata)
-
-                dfs[file_date] = df
             end
         end
     end
 
-    return if !isempty(dfs)
+    t_df_load = isempty(t_df_loads) ? 0 : sum(t_df_loads)
+    t_df_xform = isempty(t_df_xforms) ? 0 : sum(t_df_xforms)
+    t_xfer = t_tot - t_df_load - t_df_xform
+    trace(
+        LOGGER,
+        """Loading $(length(file_keys)) files (async) from $ds took ($(s_fmt(t_tot)))
+        - Idle IO time    : ($(s_fmt(t_xfer)))
+        - Loading into DF : ($(s_fmt(t_df_load)))
+        - Transforming DF : ($(s_fmt(t_df_xform)))""",
+    )
+
+    t_merge = @elapsed results = if !isempty(dfs)
         reduce(vcat, (dfs[key] for key in sort(collect(keys(dfs)))))
     else
         DataFrame()
     end
+
+    trace(LOGGER, "Merging $(length(dfs)) DataFrames from $ds took ($(s_fmt(t_merge)))")
+
+    return results
 end
 
 function _process_dataframe!(df::DataFrame, metadata::S3DBMeta)

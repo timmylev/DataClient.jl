@@ -274,3 +274,7 @@ function generate_s3_metadata_key(
 )::String
     return joinpath(store.prefix, collection, dataset, "METADATA.json")
 end
+
+function s_fmt(s::Union{Integer,AbstractFloat})::CompoundPeriod
+    return canonicalize(Millisecond(trunc(Int, s * 1000)))
+end

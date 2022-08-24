@@ -55,7 +55,7 @@ function get_backend()::OrderedDict{String,Store}
     if isempty(BACKENDS[])
         cfg_path = _get_config_path()
         cfg = if isfile(cfg_path)
-            debug(LOGGER, "Loading config file '$cfg_path'...")
+            trace(LOGGER, "Loading config file '$cfg_path'...")
             try
                 YAML.load_file(_get_config_path())
             catch err
