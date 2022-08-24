@@ -12,6 +12,7 @@ using Memento
 using Memoize
 using Mocking
 using TimeZones
+using TimerOutputs
 using YAML
 
 export ConfigFileError, DataFrameError, MissingDataError

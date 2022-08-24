@@ -168,6 +168,8 @@ function _load_s3_files(
     end_dt::ZonedDateTime,
     store::S3Store,
 )::DataFrame
+    to = TimerOutput()
+
     dfs = Dict{Int,DataFrame}()
 
     start_unix = zdt2unix(Int, start_dt)
@@ -175,19 +177,9 @@ function _load_s3_files(
     start_day_unix = zdt2unix(Int, utc_day_floor(start_dt))
     end_day_unix = zdt2unix(Int, utc_day_floor(end_dt))
 
-    ds = "'$collection.$dataset'"
+    @timeit to "retr metadata" metadata = get_metadata(collection, dataset, store)
 
-    t_meta = @elapsed metadata = get_metadata(collection, dataset, store)
-    trace(LOGGER, "Retrieving $ds metadata took ($(s_fmt(t_meta)))")
-
-    # Track the time taken to load and process the DataFrame in the @sync loop after
-    # downloading the file. This should cover the majority of the time where actual compute
-    # is being done. The remainder of time should be a good approximate of the idle IO time,
-    # i.e. time that is spent waiting for downloads and not doing anything else.
-    t_df_loads = []
-    t_df_xforms = []
-
-    t_tot = @elapsed begin
+    @timeit to "async loop" begin
         asyncmap(file_keys; ntasks=8) do key
             file = nothing
 
@@ -198,10 +190,9 @@ function _load_s3_files(
                 debug(LOGGER, "S3 object '$key' not found.")
             finally
                 if !isnothing(file)
-                    t = @elapsed df = DataFrame(CSV.File(file))
-                    push!(t_df_loads, t)
+                    @timeit to "df load" df = DataFrame(CSV.File(file))
 
-                    t = @elapsed begin
+                    @timeit to "df xform" begin
                         # trim the first as last files if they contain extra data
                         file_date = get_s3_file_timestamp(key)
                         if file_date == start_day_unix || file_date == end_day_unix
@@ -215,30 +206,25 @@ function _load_s3_files(
 
                         dfs[file_date] = df
                     end
-                    push!(t_df_xforms, t)
                 end
             end
         end
     end
 
-    t_df_load = isempty(t_df_loads) ? 0 : sum(t_df_loads)
-    t_df_xform = isempty(t_df_xforms) ? 0 : sum(t_df_xforms)
-    t_xfer = t_tot - t_df_load - t_df_xform
-    trace(
-        LOGGER,
-        """Loading $(length(file_keys)) files (async) from $ds took ($(s_fmt(t_tot)))
-        - Idle IO time    : ($(s_fmt(t_xfer)))
-        - Loading into DF : ($(s_fmt(t_df_load)))
-        - Transforming DF : ($(s_fmt(t_df_xform)))""",
-    )
-
-    t_merge = @elapsed results = if !isempty(dfs)
-        reduce(vcat, (dfs[key] for key in sort(collect(keys(dfs)))))
+    @timeit to "vcat dfs" results = if !isempty(dfs)
+        vcat([dfs[key] for key in sort(collect(keys(dfs)))]...)
     else
         DataFrame()
     end
 
-    trace(LOGGER, "Merging $(length(dfs)) DataFrames from $ds took ($(s_fmt(t_merge)))")
+    trace(LOGGER) do
+        # Adds the remaining time in the async block, i.e. the idle time waiting for
+        # s3 downloads and not doing anything else
+        TimerOutputs.complement!(to)
+        temp = IOBuffer()
+        print_timer(temp, to; sortby=:firstexec)
+        "Timing for _load_s3_files():\n" * String(take!(temp))
+    end
 
     return results
 end
