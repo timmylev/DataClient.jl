@@ -1,5 +1,10 @@
 # Changelog
 
+## Version 1.4.0
+
+### Features
+* Add support to encode/decode the `Date` type [!6](https://gitlab.invenia.ca/invenia/Datafeeds/DataClient.jl/-/merge_requests/6)
+
 ## Version 1.3.0
 
 ### Features
