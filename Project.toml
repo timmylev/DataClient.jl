@@ -1,7 +1,7 @@
 name = "DataClient"
 uuid = "a002f9d7-5e3f-4b94-9855-5334a24623d7"
 authors = ["Timothy Levins <timothy.levins@invenia.ca>"]
-version = "1.2.0"
+version = "1.3.0"
 
 [deps]
 AWS = "fbe9abb3-538b-5e4e-ba9e-bc94f4f92ebc"
@@ -17,6 +17,7 @@ Memento = "f28f55f0-a522-5efc-85c2-fe41dfb9b2d9"
 Memoize = "c03570c3-d221-55d1-a50c-7939bbd78826"
 Mocking = "78c3b35d-d492-501b-9361-3d52fe80e533"
 TimeZones = "f269a46b-ccf7-5d73-abea-4c690281aa53"
+TimerOutputs = "a759f4b9-e2f1-59dc-863e-4aeb61b1ea8f"
 YAML = "ddb6d928-2868-570f-bddf-ab3f9cf99eb6"
 
 [compat]
