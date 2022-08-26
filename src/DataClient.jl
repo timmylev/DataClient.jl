@@ -40,7 +40,9 @@ const TIMEZONES = Dict(
     "spp" => tz"America/Chicago",
 )
 
-const CUSTOM_TYPES = Dict("ZonedDateTime" => ZonedDateTime, "DateTime" => DateTime)
+const CUSTOM_TYPES = Dict(
+    "ZonedDateTime" => ZonedDateTime, "DateTime" => DateTime, "Date" => Date
+)
 
 function get_tz(coll::AbstractString, ds::AbstractString)::TimeZone
     # Special case: Datasoup data that is processed by datafeeds will be grouped
