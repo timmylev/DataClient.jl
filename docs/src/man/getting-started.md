@@ -139,3 +139,45 @@ julia> df = gather(
    2 │ 2020-01-01T02:00:00-05:00     11.2
    3 │ 2020-01-01T03:00:00-05:00     11.3
 ```
+When creating a new dataset, a type map for the dataset columns is automatically generated based on the input `DataFrame` and stored alongside the dataset metadata.
+This type map is used to validate `DataFrame`s in future insertions of new data into the dataset.
+The `column_types` keyword argument can be used to overwrite the default generated types.
+Refer to the [`insert`](@ref) function docs for more in-depth documentation.
+```
+julia> new_dataframe = DataFrame(
+    target_start=[
+        ZonedDateTime(2020, 1, 1, 1, tz"America/New_York"),
+        ZonedDateTime(2020, 1, 1, 2, tz"America/New_York"),
+        ZonedDateTime(2020, 1, 1, 3, tz"America/New_York"),
+    ],
+    string_col=["a", "b", "c"],
+    int_col=[11, 13, 15],
+)
+
+# By default, the automatically generated type map will be:
+# Dict(
+#     "target_start" => ZonedDateTime,
+#     "string_col" => AbstractString,
+#     "int_col" => Integer,
+# )
+
+# We can modify these by specifying user-defined types to allow more or less
+# flexibility for future insertion of new data into the dataset. For example,
+# the following locks 'int_col' to `Int64` only and allows `missing`s in 'string_col'
+julia> col_types = Dict(
+    "string_col" => Union{Missing,AbstractString},
+    "int_col" => Int64,
+)
+
+julia> insert(
+    "new-collection",
+    "new-dataset",
+    new_dataframe,
+    "my-store-id";
+    details=Dict("Description"=>"My insert demo."),
+    column_types=col_types,
+)
+
+# Note that modifying the stored type map of an existing dataset is not supported.
+# So, this can only be done when inserting data to a new dataset for the first time.
+```

@@ -1,5 +1,10 @@
 # Changelog
 
+## Version 1.5.0
+
+### Features
+* Support User-defined Column Types When Creating a New Dataset [!7](https://gitlab.invenia.ca/invenia/Datafeeds/DataClient.jl/-/merge_requests/7)
+
 ## Version 1.4.0
 
 ### Features

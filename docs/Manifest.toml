@@ -56,10 +56,10 @@ uuid = "9a962f9c-6df0-11e9-0e5d-c546b8b5ee8a"
 version = "1.10.0"
 
 [[DataClient]]
-deps = ["AWS", "AWSS3", "CSV", "DataFrames", "DataStructures", "Dates", "Exceptions", "JSON", "LRUCache", "Memento", "Memoize", "Mocking", "TimeZones", "YAML"]
+deps = ["AWS", "AWSS3", "CSV", "DataFrames", "DataStructures", "Dates", "Exceptions", "JSON", "LRUCache", "Memento", "Memoize", "Mocking", "TimeZones", "TimerOutputs", "YAML"]
 path = ".."
 uuid = "a002f9d7-5e3f-4b94-9855-5334a24623d7"
-version = "0.1.0"
+version = "1.5.0"
 
 [[DataFrames]]
 deps = ["Compat", "DataAPI", "Future", "InvertedIndices", "IteratorInterfaceExtensions", "LinearAlgebra", "Markdown", "Missings", "PooledArrays", "PrettyTables", "Printf", "REPL", "Reexport", "SortingAlgorithms", "Statistics", "TableTraits", "Tables", "Unicode"]
@@ -449,6 +449,12 @@ deps = ["Dates", "Downloads", "InlineStrings", "LazyArtifacts", "Mocking", "Prin
 git-tree-sha1 = "0a4d8838dc28b4bcfaa3a20efb8d63975ad6781d"
 uuid = "f269a46b-ccf7-5d73-abea-4c690281aa53"
 version = "1.8.0"
+
+[[TimerOutputs]]
+deps = ["ExprTools", "Printf"]
+git-tree-sha1 = "9dfcb767e17b0849d6aaf85997c98a5aea292513"
+uuid = "a759f4b9-e2f1-59dc-863e-4aeb61b1ea8f"
+version = "0.5.21"
 
 [[TranscodingStreams]]
 deps = ["Random", "Test"]
