@@ -1,6 +1,8 @@
 using AWS.AWSExceptions: AWSException
 using TimeZones: zdt2unix
 
+const ColumnTypes = Dict{String,Union{DataType,Union}}
+
 """
     Store
 
@@ -73,7 +75,7 @@ Base.@kwdef struct FFSMeta <: Metadata
     dataset::String
     store::FFS
     column_order::Vector{String}
-    column_types::Dict{String,Union{DataType,Union}}
+    column_types::ColumnTypes
     timezone::TimeZone
     last_modified::ZonedDateTime
     details::Union{Nothing,Dict{String,String}} = nothing
@@ -166,21 +168,9 @@ end
     encode_type(data_type::Union)::String
 
 Encodes a DataType or Union as a String.
-In some cases, a generic Abstract type is used instead of specific concrete types.
 """
 function encode_type(data_type::DataType)::String
-    return if data_type <: AbstractString
-        "AbstractString"
-    elseif data_type == Bool
-        # note that Bool <: Integer
-        "Bool"
-    elseif data_type <: Integer
-        "Integer"
-    elseif data_type <: AbstractFloat
-        "AbstractFloat"
-    else
-        repr(data_type)
-    end
+    return repr(data_type)
 end
 
 function encode_type(data_type::Union)::String
@@ -189,13 +179,36 @@ function encode_type(data_type::Union)::String
 end
 
 """
-    sanitize_type(data_type::Union{DataType,Union})::Union{DataType,Union}
+    sanitize_type(data_type::DataType)::DataType
+    sanitize_type(data_type::Union)::Union
 
-Encodes and then decodes a DataType. This may result in an abstract type of the original
-input type. See [`encode_type`](@ref) for more info.
+Converts certain Types (or Union of Types) to their respective AbstractTypes:
+- `AbstractString` : for all `<: AbstractString`
+- `AbstractFloat`  : for all `<: AbstractFloat`
+- `Integer`        : for all `<: Integer`, except for `Bool` which remains a `Bool`
+
+## Developer Note
+This is used to generate a column type map for dataset columns. The type map will be
+used to validate future insertion of new data (DataFrame).
 """
-function sanitize_type(data_type::Union{DataType,Union})::Union{DataType,Union}
-    return decode_type(encode_type(data_type))
+function sanitize_type(data_type::DataType)::DataType
+    return if data_type <: AbstractString
+        AbstractString
+    elseif data_type == Bool
+        # note that Bool <: Integer
+        Bool
+    elseif data_type <: Integer
+        Integer
+    elseif data_type <: AbstractFloat
+        AbstractFloat
+    else
+        data_type
+    end
+end
+
+function sanitize_type(data_type::Union)::Union
+    inner_types = [Symbol(sanitize_type(el)) for el in Base.uniontypes(data_type)]
+    return eval(Expr(:curly, [:Union, inner_types...]...))  # reconstructs the Union
 end
 
 """

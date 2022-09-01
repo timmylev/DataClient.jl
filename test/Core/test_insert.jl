@@ -1,6 +1,7 @@
 using AWSS3: s3_get, s3_put
 using CSV
 using DataClient:
+    ColumnTypes,
     FFS,
     FFSMeta,
     _ensure_created,
@@ -43,7 +44,7 @@ using TimeZones
         ds = "dataset"
         tz = tz"America/New_York"
         column_order = ["target_start", "target_end", "val_a", "val_b"]
-        column_types = Dict(
+        column_types::ColumnTypes = Dict(
             "target_start" => ZonedDateTime,
             "target_end" => ZonedDateTime,
             "val_a" => Integer,
@@ -57,12 +58,14 @@ using TimeZones
             "val_b" => Vector{String}(["abc"]),
         )
 
-        function gen_metadata(required_cols=column_order; details=nothing)
+        function gen_metadata(;
+            column_order=column_order, column_types=column_types, details=nothing
+        )
             return FFSMeta(;
                 collection=coll,
                 dataset=ds,
                 store=dummy_ffs,
-                column_order=required_cols,
+                column_order=column_order,
                 column_types=column_types,
                 timezone=tz,
                 last_modified=freezed_now,
@@ -70,72 +73,106 @@ using TimeZones
             )
         end
 
-        expected = gen_metadata()
+        function test_compare(f1::FFSMeta, f2::FFSMeta; skip_fields=nothing)
+            for k in fieldnames(FFSMeta)
+                if isnothing(skip_fields) || !(k in skip_fields)
+                    @test (k, getfield(f1, k)) == (k, getfield(f2, k))
+                end
+            end
+        end
 
         @testset "test new_dataset" begin
             patched_get = @patch get_metadata(args...) = throw(MissingDataError(coll, ds))
 
-            apply([patched_get, patched_write, patched_now]) do
-                evaluated = Memento.setlevel!(DC_LOGGER, "debug") do
-                    @test_log(
-                        DC_LOGGER,
-                        "debug",
-                        "Metadata for '$coll-$ds' does not exist, creating metadata...",
-                        _ensure_created(coll, ds, test_df, dummy_ffs, nothing),
-                    )
+            @testset "basic" begin
+                apply([patched_get, patched_write, patched_now]) do
+                    evaluated = Memento.setlevel!(DC_LOGGER, "debug") do
+                        @test_log(
+                            DC_LOGGER,
+                            "debug",
+                            "Metadata for '$coll-$ds' does not exist, creating metadata...",
+                            _ensure_created(coll, ds, test_df, dummy_ffs),
+                        )
+                    end
+
+                    expected = gen_metadata()
+                    test_compare(evaluated, expected; skip_fields=[:last_modified])
                 end
-
-                @test evaluated.collection == expected.collection
-                @test evaluated.dataset == expected.dataset
-                @test evaluated.column_order == expected.column_order
-                @test evaluated.column_types == expected.column_types
-                @test evaluated.timezone == expected.timezone
             end
-        end
 
-        @testset "test existing_dataset: valid" begin
-            patched_get = @patch get_metadata(args...) = expected
-
-            apply([patched_get, patched_write, patched_now]) do
-                evaluated = Memento.setlevel!(DC_LOGGER, "debug") do
-                    @test_log(
-                        DC_LOGGER,
-                        "debug",
-                        "Updating existing metadata for dataset '$coll-$ds'.",
-                        _ensure_created(coll, ds, test_df, dummy_ffs, nothing),
+            @testset "valid user-defined column types" begin
+                apply([patched_get, patched_write, patched_now]) do
+                    custom = Dict("val_a" => Int64, "val_b" => Union{Missing,String})
+                    col_types::ColumnTypes = merge(column_types, custom)
+                    evaluated = _ensure_created(
+                        coll, ds, test_df, dummy_ffs; column_types=col_types
                     )
+
+                    expected = gen_metadata(; column_types=col_types)
+                    test_compare(evaluated, expected; skip_fields=[:last_modified])
+
+                    # valid but warning is logged because of unknown column that isn't
+                    # present in dataframe
+                    col = "unknown_col"
+                    col_types = Dict(col => Int64)
+
+                    evaluated = @test_log(
+                        DC_LOGGER,
+                        "warn",
+                        "The column '$col' in the user-defined `column_types` " *
+                            "is not present in the input DataFrame, ignoring it...",
+                        _ensure_created(
+                            coll, ds, test_df, dummy_ffs; column_types=col_types
+                        ),
+                    )
+
+                    expected = gen_metadata()
+                    test_compare(evaluated, expected; skip_fields=[:last_modified])
+                end
+            end
+
+            @testset "invalid user-defined column types" begin
+                apply([patched_get, patched_write, patched_now]) do
+                    col_types = merge(column_types, Dict("val_a" => String))
+
+                    @test_throws DataFrameError(
+                        "The input DataFrame column 'val_a' has type 'Int64' which is" *
+                        " incompatible with the user-defined type of 'String'",
+                    ) _ensure_created(coll, ds, test_df, dummy_ffs; column_types=col_types)
                 end
             end
         end
 
         @testset "test existing_dataset: required cols missing" begin
-            required_cols = [column_order..., "new_column"]
-            patched_get = @patch get_metadata(args...) = gen_metadata(required_cols)
+            patched_get = @patch function get_metadata(args...)
+                return gen_metadata(; column_order=[column_order..., "new_column"])
+            end
 
             apply([patched_get, patched_write, patched_now]) do
                 @test_throws DataFrameError(
-                    "Missing required columns [\"new_column\"] for existing dataset '$coll-$ds'.",
-                ) _ensure_created(coll, ds, test_df, dummy_ffs, nothing)
+                    "Missing required columns [\"new_column\"] for dataset '$coll-$ds'."
+                ) _ensure_created(coll, ds, test_df, dummy_ffs)
             end
         end
 
         @testset "test existing_dataset: extra cols found" begin
-            required_cols = [column_order[1:(end - 1)]...]
-            patched_get = @patch get_metadata(args...) = gen_metadata(required_cols)
+            patched_get = @patch function get_metadata(args...)
+                return gen_metadata(; column_order=[column_order[1:(end - 1)]...])
+            end
 
             apply([patched_get, patched_write]) do
                 @test_log(
                     DC_LOGGER,
                     "warn",
                     "Extra columns [\"val_b\"] found in the input DataFrame for " *
-                        "existing dataset '$coll-$ds' will be ignored.",
-                    _ensure_created(coll, ds, test_df, dummy_ffs, nothing),
+                        "dataset '$coll-$ds' will be ignored.",
+                    _ensure_created(coll, ds, test_df, dummy_ffs),
                 )
             end
         end
 
-        @testset "test existing_dataset: modified column types" begin
-            patched_get = @patch get_metadata(args...) = expected
+        @testset "test existing_dataset: modified DF column types" begin
+            patched_get = @patch get_metadata(args...) = gen_metadata()
 
             apply([patched_get, patched_write]) do
                 # test using a DF with incompatible column types
@@ -143,14 +180,28 @@ using TimeZones
                 df.val_a = unix2zdt.(df[!, :val_a])
                 @test_throws DataFrameError(
                     "The input DataFrame column 'val_a' has type 'ZonedDateTime' " *
-                    "which is incompatible with the existing stored type of 'Integer'",
-                ) _ensure_created(coll, ds, df, dummy_ffs, nothing)
+                    "which is incompatible with the stored type of 'Integer'",
+                ) _ensure_created(coll, ds, df, dummy_ffs)
 
                 # test using a DF with different but still compatible column types
                 df = copy(test_df)
                 df.val_a = convert.(UInt8, df[!, :val_a])
                 # no error is thrown
-                _ensure_created(coll, ds, df, dummy_ffs, nothing)
+                _ensure_created(coll, ds, df, dummy_ffs)
+            end
+        end
+
+        @testset "test existing_dataset: specify column types" begin
+            patched_get = @patch get_metadata(args...) = gen_metadata()
+
+            apply([patched_get, patched_write]) do
+                col_types::ColumnTypes = Dict("val_a" => String)
+                @test_log(
+                    DC_LOGGER,
+                    "warn",
+                    "Ignoring param `column_types`, dataset is already created.",
+                    _ensure_created(coll, ds, test_df, dummy_ffs; column_types=col_types)
+                )
             end
         end
 
@@ -169,7 +220,7 @@ using TimeZones
                 to_update = Dict("k2" => "new", "k3" => "new")
                 expected = Dict("k1" => "old", "k2" => "new", "k3" => "new")
 
-                _ensure_created(coll, ds, test_df, dummy_ffs, to_update)
+                _ensure_created(coll, ds, test_df, dummy_ffs; details=to_update)
 
                 @test CALLED_WITH["metadata"].details == expected
             end
@@ -287,7 +338,7 @@ using TimeZones
             CALL_TRACKER[s3key] = df
             return nothing
         end
-        patched_ensure = @patch _ensure_created(args...) = nothing
+        patched_ensure = @patch _ensure_created(args...; kwargs...) = nothing
 
         apply([patched_merge, patched_ensure]) do
             # Note that this input df spans 3 days, so it should be partitined into 3

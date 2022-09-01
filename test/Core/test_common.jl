@@ -11,6 +11,7 @@ using DataClient:
     get_metadata,
     get_s3_file_timestamp,
     s3_cached_get,
+    sanitize_type,
     unix2zdt,
     utc_day_floor,
     write_metadata
@@ -131,19 +132,23 @@ using WeakRefStrings
 
     @testset "test encode/decode types" begin
         expected = Dict(
-            String31 => "AbstractString",
-            String => "AbstractString",
-            Float64 => "AbstractFloat",
-            Float32 => "AbstractFloat",
-            Int64 => "Integer",
-            Int32 => "Integer",
-            UInt64 => "Integer",
+            AbstractString => "AbstractString",
+            AbstractFloat => "AbstractFloat",
+            Integer => "Integer",
             ZonedDateTime => "ZonedDateTime",
             DateTime => "DateTime",
             Date => "Date",
             Bool => "Bool",
             Char => "Char",
-            Union{Missing,Int64,Int32} => "Union:Missing:Integer",
+            String31 => "String31",
+            String => "String",
+            Float64 => "Float64",
+            Float32 => "Float32",
+            Int64 => "Int64",
+            Int32 => "Int32",
+            UInt64 => "UInt64",
+            Union{Missing,Integer} => "Union:Missing:Integer",
+            Union{Missing,Int64,Int32} => "Union:Int64:Missing:Int32",
         )
 
         for (data_type, str) in pairs(expected)
@@ -175,6 +180,29 @@ using WeakRefStrings
         @test_throws ErrorException("Unable to decode custom type '$unknown2'.") decode_type(
             unknown2
         )
+    end
+
+    @testset "test sanitize types" begin
+        expected = Dict(
+            String31 => AbstractString,
+            String => AbstractString,
+            Float64 => AbstractFloat,
+            Float32 => AbstractFloat,
+            Int64 => Integer,
+            Int32 => Integer,
+            UInt64 => Integer,
+            ZonedDateTime => ZonedDateTime,
+            DateTime => DateTime,
+            Date => Date,
+            Bool => Bool,
+            Char => Char,
+            Union{String,Int64,Int32} => Union{AbstractString,Integer},
+            Union{Missing,Int64,Int32} => Union{Missing,Integer},
+        )
+
+        for (data_type, sanitized) in pairs(expected)
+            @test sanitize_type(data_type) == sanitized
+        end
     end
 
     @testset "test unix2zdt" begin
