@@ -1,5 +1,10 @@
 # Changelog
 
+## Version 1.5.1
+
+### Fixes
+* Modify the behavior for `AWSUtils.s3_cached_get` to return a file path instead of a file descriptor [!8](https://gitlab.invenia.ca/invenia/Datafeeds/DataClient.jl/-/merge_requests/8)
+
 ## Version 1.5.0
 
 ### Features
