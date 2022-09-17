@@ -243,8 +243,16 @@ function _process_dataframe!(df::DataFrame, metadata::S3DBMeta)
         df[!, col] = unix2zdt.(df[!, col], metadata.timezone)
     end
 
+    # decode 'list' types
+    parser(el) = ismissing(el) ? el : JSON.parse(el; null=missing)
+    for (col, type) in pairs(metadata.meta["type_map"])
+        if type == "list"
+            df[!, col] = parser.(df[!, col])
+        end
+    end
+
     # convert Int bounds to intervals notation, eg. "[)"
-    df.target_bounds = [BOUNDS[b] for b in df.target_bounds]
+    df.target_bounds = map(b -> DataClient.BOUNDS[b], df.target_bounds)
 
     return nothing
 end

@@ -1,0 +1,3 @@
+{"tags": {"day_ahead_oasis_lmp": {"content_offset": 172800, "datafeed_runtime": "None", "time_zone": "America/Los_Angeles", "content_interval": 86400, "publish_offset": 
+43200, "publish_interval": 86400}}, "type_map": {"release_date": "int", "target_start": "int", "target_end": "int", "target_bounds": "int", "node_name": "str", "tag": 
+"str", "lmp": "float", "mlc": "float", "mcc": "float"}, "superkey": ["release_date", "target_start", "target_end", "node_name", "tag"], "value_key": ["lmp", "mlc", "mcc"]}

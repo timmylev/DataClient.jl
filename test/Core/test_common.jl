@@ -23,17 +23,56 @@ using WeakRefStrings
 
 @testset "test src/common.jl" begin
     @testset "test get_metadata S3DB" begin
-        coll, ds = "caiso", "test_dataset"
-        store = S3DB("test-bucket", "test-prefix")
-        expected = S3DBMeta(coll, ds, store, TIMEZONES[coll])
-        @test get_metadata(coll, ds, store) == expected
+        # basic test
+        apply(@patch s3_cached_get(bucket::String, key::String) = get_test_data(key)) do
+            coll, ds = "caiso", "dayahead_price"
+            store = S3DB("test-bucket", "test-s3db")
+            expected = S3DBMeta(
+                coll,
+                ds,
+                store,
+                TIMEZONES[coll],
+                Dict{String,Any}(
+                    "type_map" => Dict{String,Any}(
+                        "mlc" => "float",
+                        "target_end" => "int",
+                        "tag" => "str",
+                        "lmp" => "float",
+                        "mcc" => "float",
+                        "release_date" => "int",
+                        "target_bounds" => "int",
+                        "target_start" => "int",
+                        "node_name" => "str",
+                    ),
+                    "superkey" => Any[
+                        "release_date", "target_start", "target_end", "node_name", "tag"
+                    ],
+                    "value_key" => Any["lmp", "mlc", "mcc"],
+                    "tags" => Dict{String,Any}(
+                        "day_ahead_oasis_lmp" => Dict{String,Any}(
+                            "time_zone" => "America/Los_Angeles",
+                            "content_offset" => 172800,
+                            "content_interval" => 86400,
+                            "publish_offset" => 43200,
+                            "datafeed_runtime" => "None",
+                            "publish_interval" => 86400,
+                        ),
+                    ),
+                ),
+            )
+            evaluated = get_metadata(coll, ds, store)
+            @test evaluated.collection == expected.collection
+            @test evaluated.dataset == expected.dataset
+            @test evaluated.timezone == expected.timezone
+            @test evaluated.meta == expected.meta
+        end
     end
 
     @testset "test get_metadata FFS" begin
         # basic test
         apply(@patch s3_cached_get(bucket::String, key::String) = get_test_data(key)) do
-            coll, ds = "caiso", "test_dataset"
-            store = FFS("test-bucket", "test-prefix")
+            coll, ds = "test-coll", "test-ds"
+            store = FFS("test-bucket", "my-prefix")
             expected = FFSMeta(;
                 collection=coll,
                 dataset=ds,

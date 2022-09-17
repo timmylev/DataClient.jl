@@ -48,11 +48,7 @@ function gather(
 )::DataFrame
     store = get_backend(store_id)
 
-    metadata = try
-        @mock get_metadata(collection, dataset, store)
-    catch err
-        throw(MissingDataError(collection, dataset))
-    end
+    metadata = @mock get_metadata(collection, dataset, store)
 
     tz = metadata.timezone
     start_zdt = ZonedDateTime(start_dt, tz)
