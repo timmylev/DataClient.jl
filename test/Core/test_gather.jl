@@ -9,10 +9,12 @@ using DataClient:
     _load_s3_files,
     _process_dataframe!,
     unix2zdt,
-    zdt2unix
+    zdt2unix,
+    get_metadata
 using DataClient.AWSUtils: s3_cached_get
 using DataFrames
 using Dates
+using JSON
 using TimeZones
 using TimeZones: zdt2unix
 
@@ -92,6 +94,7 @@ using TimeZones: zdt2unix
             ZonedDateTime(2020, 1, 1, 2, tz"UTC"),
             ZonedDateTime(2020, 1, 1, 3, tz"UTC"),
         ]
+        curves = ["[12.4, 5.7, 3.6]", missing, "[1.2, null, 6.3]"]
         bounds = [1 for zdt in zdts]
 
         df = DataFrame(
@@ -100,27 +103,40 @@ using TimeZones: zdt2unix
             "target_end" => zdt2unix.(Int, zdts),
             "target_bounds" => bounds,
             "tag" => ["tag_a" for zdt in zdts],
+            "off_nonspin_offer_curve" => curves,
         )
 
-        coll = "spp"
-        ds = "test-ds"
-        tz = DataClient.TIMEZONES[coll]
-        metadata = DataClient.S3DBMeta(coll, ds, S3DB("buck", "prex"), tz)
+        coll, ds = "datasoup", "ercot_da_gen_ancillary_offers"
+        store = S3DB("test-bucket", "test-s3db")
+        metadata =
+            apply(@patch s3_cached_get(bucket::String, key::String) = get_test_data(key)) do
+                get_metadata(coll, ds, store)
+            end
 
         _process_dataframe!(df, metadata)
         # show that columns are reordered
-        @test names(df) ==
-            ["target_start", "target_end", "target_bounds", "release_date", "tag"]
+        @test names(df) == [
+            "target_start",
+            "target_end",
+            "target_bounds",
+            "release_date",
+            "off_nonspin_offer_curve",
+            "tag",
+        ]
         # show that zdts are decoded
         @test df.target_start == zdts
         @test df.target_end == zdts
         @test df.release_date == zdts
         # show that bounds are decoded
         @test df.target_bounds == [DataClient.BOUNDS[b] for b in bounds]
+        # show that list_types are decoded correctly
+        @test isequal(
+            df.off_nonspin_offer_curve, [[12.4, 5.7, 3.6], missing, [1.2, missing, 6.3]]
+        )
         # show that timezones are correct, we use specific timezones for s3db data
-        @test timezone(first(df).target_start) == DataClient.TIMEZONES[coll]
-        @test timezone(first(df).target_end) == DataClient.TIMEZONES[coll]
-        @test timezone(first(df).release_date) == DataClient.TIMEZONES[coll]
+        @test timezone(first(df).target_start) == DataClient.get_tz(coll, ds)
+        @test timezone(first(df).target_end) == DataClient.get_tz(coll, ds)
+        @test timezone(first(df).release_date) == DataClient.get_tz(coll, ds)
     end
 
     @testset "test _process_dataframe! FFS" begin

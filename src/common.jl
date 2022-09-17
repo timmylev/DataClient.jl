@@ -63,6 +63,7 @@ struct S3DBMeta <: Metadata
     dataset::String
     store::S3DB
     timezone::TimeZone
+    meta::Dict{String,Any}
 end
 
 """
@@ -87,8 +88,12 @@ end
 Retrieves the metadata for a dataset from the [`S3DB`](@ref) store.
 """
 function get_metadata(coll::String, ds::String, store::S3DB)::S3DBMeta
+    s3_key = generate_s3_metadata_key(coll, ds, store)
+
+    data = _load_metadata_file(store.bucket, s3_key, coll, ds)
     tz = get_tz(coll, ds)
-    return S3DBMeta(coll, ds, store, tz)
+
+    return S3DBMeta(coll, ds, store, tz, data)
 end
 
 """
@@ -99,24 +104,28 @@ Retrieves the metadata for a dataset from the [`FFS`](@ref) store.
 function get_metadata(coll::String, ds::String, store::FFS)::FFSMeta
     s3_key = generate_s3_metadata_key(coll, ds, store)
 
-    try
-        file = @mock s3_cached_get(store.bucket, s3_key)
-        data = JSON.parse(read(file, String))
-        tz = TimeZone(data["timezone"])
-        column_types = Dict(k => decode_type(v) for (k, v) in pairs(data["column_types"]))
-        return FFSMeta(;
-            collection=coll,
-            dataset=ds,
-            store=store,
-            column_order=data["column_order"],
-            column_types=column_types,
-            timezone=tz,
-            last_modified=unix2zdt(data["last_modified"]),
-            details=data["details"],
-        )
+    data = _load_metadata_file(store.bucket, s3_key, coll, ds)
+    tz = TimeZone(data["timezone"])
+    column_types = Dict(k => decode_type(v) for (k, v) in pairs(data["column_types"]))
+    return FFSMeta(;
+        collection=coll,
+        dataset=ds,
+        store=store,
+        column_order=data["column_order"],
+        column_types=column_types,
+        timezone=tz,
+        last_modified=unix2zdt(data["last_modified"]),
+        details=data["details"],
+    )
+end
+
+function _load_metadata_file(bucket::String, key::String, coll::String, ds::String)
+    return try
+        file = @mock s3_cached_get(bucket, key)
+        JSON.parse(read(file, String))
     catch err
         if isa(err, AWSException) && err.code == "NoSuchKey"
-            throw(MissingDataError(coll, ds))
+            rethrow(MissingDataError(coll, ds))
         else
             throw(err)
         end

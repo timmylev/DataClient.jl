@@ -1,5 +1,11 @@
 # Changelog
 
+## Version 1.6.0
+
+### Features
+* Support loading S3DB vector columns [!9](https://gitlab.invenia.ca/invenia/Datafeeds/DataClient.jl/-/merge_requests/9)
+
+
 ## Version 1.5.1
 
 ### Fixes

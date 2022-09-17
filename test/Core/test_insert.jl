@@ -267,7 +267,7 @@ using TimeZones
             patched_s3_get = @patch s3_get(bucket, key) = throw(AwsKeyErr)
 
             apply([patched_s3_get, patched_s3_put]) do
-                s3_key = "1577836800.csv.gz"
+                s3_key = "my-prefix/test-coll/test-ds/year=2020/1577836800.csv.gz"
                 input_df = DataFrame(
                     "target_start" => [ZonedDateTime(2020, 1, 1, 1, tz)],
                     "target_end" => [ZonedDateTime(2020, 1, 1, 2, tz)],
@@ -286,7 +286,7 @@ using TimeZones
             patched_s3_get = @patch s3_get(bucket, key) = get_test_data(key)
 
             apply([patched_s3_get, patched_s3_put]) do
-                s3_key = "1577836800.csv.gz"
+                s3_key = "my-prefix/test-coll/test-ds/year=2020/1577836800.csv.gz"
                 existing_data = DataFrame(CSV.File(get_test_data(s3_key)))
                 _process_dataframe!(existing_data, metadata)
 
@@ -313,7 +313,7 @@ using TimeZones
             patched_s3_get = @patch s3_get(bucket, key) = get_test_data(key)
 
             apply([patched_s3_get, patched_s3_put]) do
-                s3_key = "1577836800.csv.gz"
+                s3_key = "my-prefix/test-coll/test-ds/year=2020/1577836800.csv.gz"
 
                 # test that a new row is added
                 input_df = DataFrame(

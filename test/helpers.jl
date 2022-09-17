@@ -17,8 +17,7 @@ This is used to mock the S3 GET operations.
 Optionally provide an exception to throw if a file does not exist.
 """
 function get_test_data(s3_key::String, ex=nothing)::IOStream
-    file_name = rsplit(s3_key, "/"; limit=2)[end]
-    path = joinpath(@__DIR__, "files", "s3db_data", file_name)
+    path = joinpath(@__DIR__, "files", "data", s3_key)
 
     if !isfile(path)
         ex = isnothing(ex) ? ErrorException("Test file $path does not exist.") : ex
