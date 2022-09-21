@@ -179,7 +179,7 @@ end
 Encodes a DataType or Union as a String.
 """
 function encode_type(data_type::DataType)::String
-    return repr(data_type)
+    return get(_CUSTOM_TYPES, data_type, repr(data_type))
 end
 
 function encode_type(data_type::Union)::String

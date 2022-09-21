@@ -1,5 +1,7 @@
 using TimeZones: zdt2unix
 
+const to = TimerOutput()
+
 """
     insert(
         collection::AbstractString,
@@ -103,19 +105,34 @@ function _insert(
     details::Union{Nothing,Dict{String,String}}=nothing,
     column_types::Union{Nothing,ColumnTypes}=nothing,
 )
+    reset_timer!(to)
+
     _validate(dataframe, store)
-    metadata = @mock _ensure_created(
+    @timeit to "ensure_created" metadata = @mock _ensure_created(
         collection, dataset, dataframe, store; details=details, column_types=column_types
     )
 
     @memoize groupkey(zdt) = zdt2unix(Int, utc_day_floor(zdt))
     # add a group key column
-    dataframe.group_key = map(groupkey, dataframe.target_start)
-    grouped = groupby(dataframe, :group_key)
+    @timeit to "create_partitions" begin
+        dataframe.group_key = map(groupkey, dataframe.target_start)
+        grouped = groupby(dataframe, :group_key)
+    end
 
-    for (gk, sf) in pairs(grouped)
-        s3key = generate_s3_file_key(collection, dataset, unix2zdt(gk.group_key), store)
-        @mock _merge(sf, s3key, metadata)
+    @timeit to "async loop" begin
+        asyncmap(pairs(grouped); ntasks=8) do (gk, sf)
+            s3key = generate_s3_file_key(collection, dataset, unix2zdt(gk.group_key), store)
+            @mock _merge(sf, s3key, metadata)
+        end
+    end
+
+    trace(LOGGER) do
+        temp = IOBuffer()
+        # Adds the remaining time in the async block, i.e. the idle time waiting for
+        # s3 downloads/uploads and not doing anything else
+        TimerOutputs.complement!(to)
+        print_timer(temp, to; sortby=:firstexec)
+        "Timing for _insert():\n" * String(take!(temp))
     end
 
     # remove the group key column
@@ -131,19 +148,22 @@ deduplicated before writing to S3.
 """
 function _merge(dataframe::AbstractDataFrame, s3key::AbstractString, metadata::FFSMeta)
     # do not modify the original dataframe
-    df = copy(dataframe)
+    @timeit to "copy_df" df = copy(dataframe)
 
     # encode ZonedDateTimes as unix timestamps
-    for (col, type) in pairs(metadata.column_types)
-        if type == ZonedDateTime
-            df[!, col] = zdt2unix.(Int, df[!, col])
+    @timeit to "zdt_to_unix" begin
+        for (col, type) in pairs(metadata.column_types)
+            if type == ZonedDateTime
+                df[!, col] = zdt2unix.(Int, df[!, col])
+            end
         end
     end
 
     # check if there is existing data in S3
+    bucket = metadata.store.bucket
     existing = try
-        obj = @mock s3_get(metadata.store.bucket, s3key)
-        existing = DataFrame(CSV.File(obj))
+        obj = @mock s3_get(bucket, s3key; retry=false)
+        @timeit to "load_existing" existing = DataFrame(CSV.File(obj))
     catch err
         isa(err, AWSException) && err.code == "NoSuchKey" || throw(err)
         DataFrame()
@@ -151,8 +171,8 @@ function _merge(dataframe::AbstractDataFrame, s3key::AbstractString, metadata::F
 
     len_old = nrow(existing)
 
-    merged = reduce(vcat, (existing, df); cols=metadata.column_order)
-    sort!(unique!(merged), metadata.column_order)
+    @timeit to "merge" merged = vcat(existing, df; cols=metadata.column_order)
+    @timeit to "dedup_and_sort" sort!(unique!(merged), metadata.column_order)
 
     debug(
         LOGGER,
@@ -161,9 +181,9 @@ function _merge(dataframe::AbstractDataFrame, s3key::AbstractString, metadata::F
     )
 
     stream = IOBuffer()
-    CSV.write(stream, merged; compress=true)
+    @timeit to "to_csv_gz" CSV.write(stream, merged; compress=true)
     # the stream is closed after compression, so use stream.data to access data
-    @mock s3_put(metadata.store.bucket, s3key, stream.data)
+    @mock s3_put(bucket, s3key, stream.data)
 
     return nothing
 end

@@ -1,5 +1,11 @@
 # Changelog
 
+## Version 1.7.0
+
+### Features
+* Implement async and add timing logs to `insert` [!10](https://gitlab.invenia.ca/invenia/Datafeeds/DataClient.jl/-/merge_requests/10)
+
+
 ## Version 1.6.0
 
 ### Features
