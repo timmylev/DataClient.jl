@@ -50,7 +50,7 @@ function s3_cached_get(s3_bucket::String, s3_key::String, cache::FileCache)::Str
     get!(cache.dict, file_path) do
         debug(LOGGER, "Downloading S3 file 's3://$s3_bucket/$s3_key'...")
         mkpath(abspath(joinpath(file_path, "..")))
-        @mock s3_get_file(s3_bucket, s3_key, file_path)
+        @mock s3_get_file(s3_bucket, s3_key, file_path; retry=false)
         filesize(file_path)
     end
     return file_path

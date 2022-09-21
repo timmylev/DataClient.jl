@@ -264,7 +264,7 @@ using TimeZones
         end
 
         @testset "test _merge: new file" begin
-            patched_s3_get = @patch s3_get(bucket, key) = throw(AwsKeyErr)
+            patched_s3_get = @patch s3_get(bucket, key; kwargs...) = throw(AwsKeyErr)
 
             apply([patched_s3_get, patched_s3_put]) do
                 s3_key = "my-prefix/test-coll/test-ds/year=2020/1577836800.csv.gz"
@@ -283,7 +283,7 @@ using TimeZones
         end
 
         @testset "test _merge: existing file" begin
-            patched_s3_get = @patch s3_get(bucket, key) = get_test_data(key)
+            patched_s3_get = @patch s3_get(bucket, key; kwargs...) = get_test_data(key)
 
             apply([patched_s3_get, patched_s3_put]) do
                 s3_key = "my-prefix/test-coll/test-ds/year=2020/1577836800.csv.gz"
@@ -310,7 +310,7 @@ using TimeZones
         end
 
         @testset "test _merge: remove extra columns" begin
-            patched_s3_get = @patch s3_get(bucket, key) = get_test_data(key)
+            patched_s3_get = @patch s3_get(bucket, key; kwargs...) = get_test_data(key)
 
             apply([patched_s3_get, patched_s3_put]) do
                 s3_key = "my-prefix/test-coll/test-ds/year=2020/1577836800.csv.gz"

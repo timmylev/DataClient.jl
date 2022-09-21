@@ -6,7 +6,9 @@ using DataClient.AWSUtils.S3: list_objects_v2
     FILE_SIZE_MB = 2
     CALL_COUNTER = Ref(0)
 
-    patched_s3_get_file = @patch function s3_get_file(s3_bucket, s3_key, file_path)
+    patched_s3_get_file = @patch function s3_get_file(
+        s3_bucket, s3_key, file_path; kwargs...
+    )
         CALL_COUNTER[] += 1
         stream = IOBuffer(zeros(UInt8, FILE_SIZE_MB * 1000000))
         open(file_path, "w") do file

@@ -45,6 +45,8 @@ const CUSTOM_TYPES = Dict(
     "ZonedDateTime" => ZonedDateTime, "DateTime" => DateTime, "Date" => Date
 )
 
+const _CUSTOM_TYPES = Dict(values(CUSTOM_TYPES) .=> keys(CUSTOM_TYPES))
+
 function get_tz(coll::AbstractString, ds::AbstractString)::TimeZone
     # Special case: Datasoup data that is processed by datafeeds will be grouped
     # under the 'datasoup' collection with '<grid>_' as the dataset prefix in S3DB.
