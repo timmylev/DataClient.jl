@@ -95,6 +95,7 @@ using TimeZones: zdt2unix
             ZonedDateTime(2020, 1, 1, 3, tz"UTC"),
         ]
         curves = ["[12.4, 5.7, 3.6]", missing, "[1.2, null, 6.3]"]
+        mw_blocks = ["[1.0]", "[1.0, 2.0]", "[1.0, 2.0]"]
         bounds = [1 for zdt in zdts]
 
         df = DataFrame(
@@ -104,6 +105,7 @@ using TimeZones: zdt2unix
             "target_bounds" => bounds,
             "tag" => ["tag_a" for zdt in zdts],
             "off_nonspin_offer_curve" => curves,
+            "mw_blocks" => mw_blocks
         )
 
         coll, ds = "datasoup", "ercot_da_gen_ancillary_offers"
@@ -121,6 +123,7 @@ using TimeZones: zdt2unix
             "target_bounds",
             "release_date",
             "off_nonspin_offer_curve",
+            "mw_blocks",
             "tag",
         ]
         # show that zdts are decoded
@@ -133,6 +136,8 @@ using TimeZones: zdt2unix
         @test isequal(
             df.off_nonspin_offer_curve, [[12.4, 5.7, 3.6], missing, [1.2, missing, 6.3]]
         )
+        @test isequal(df.mw_blocks, [[1.0], [1.0, 2.0], [1.0, 2.0]])
+        @test eltype(df.mw_blocks) <: Vector{<:AbstractFloat}
         # show that timezones are correct, we use specific timezones for s3db data
         @test timezone(first(df).target_start) == DataClient.get_tz(coll, ds)
         @test timezone(first(df).target_end) == DataClient.get_tz(coll, ds)
