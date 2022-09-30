@@ -105,7 +105,8 @@ using TimeZones: zdt2unix
             "target_bounds" => bounds,
             "tag" => ["tag_a" for zdt in zdts],
             "off_nonspin_offer_curve" => curves,
-            "mw_blocks" => mw_blocks
+            "mw_blocks" => mw_blocks,
+            "multi_hour" => [0, 0, 1],
         )
 
         coll, ds = "datasoup", "ercot_da_gen_ancillary_offers"
@@ -138,6 +139,8 @@ using TimeZones: zdt2unix
         )
         @test isequal(df.mw_blocks, [[1.0], [1.0, 2.0], [1.0, 2.0]])
         @test eltype(df.mw_blocks) <: Vector{<:AbstractFloat}
+        # parse bools
+        @test df.multi_hour == [false, false, true]
         # show that timezones are correct, we use specific timezones for s3db data
         @test timezone(first(df).target_start) == DataClient.get_tz(coll, ds)
         @test timezone(first(df).target_end) == DataClient.get_tz(coll, ds)

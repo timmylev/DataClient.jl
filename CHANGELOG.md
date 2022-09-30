@@ -1,5 +1,10 @@
 # Changelog
 
+## Version 1.9.0
+
+### Features
+* Support parsing S3DB `bool` columns [!12](https://gitlab.invenia.ca/invenia/Datafeeds/DataClient.jl/-/merge_requests/12)
+
 ## Version 1.8.0
 
 ### Features

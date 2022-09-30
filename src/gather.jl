@@ -248,6 +248,9 @@ function _process_dataframe!(df::DataFrame, metadata::S3DBMeta)
     for (col, type) in pairs(metadata.meta["type_map"])
         if type == "list"
             df[!, col] = parser.(df[!, col])
+
+        elseif type == "bool"
+            df[!, col] = convert.(Bool, df[!, col])
         end
     end
 
