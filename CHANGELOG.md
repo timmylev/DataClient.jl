@@ -1,5 +1,10 @@
 # Changelog
 
+## Version 1.8.0
+
+### Features
+* Parse list types into `Vector`s with more specific element types [!11](https://gitlab.invenia.ca/invenia/Datafeeds/DataClient.jl/-/merge_requests/11)
+
 ## Version 1.7.0
 
 ### Features
