@@ -125,6 +125,7 @@ using TimeZones: zdt2unix
             "release_date",
             "off_nonspin_offer_curve",
             "mw_blocks",
+            "multi_hour",
             "tag",
         ]
         # show that zdts are decoded
