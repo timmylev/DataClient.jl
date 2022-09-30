@@ -244,7 +244,7 @@ function _process_dataframe!(df::DataFrame, metadata::S3DBMeta)
     end
 
     # decode 'list' types
-    parser(el) = ismissing(el) ? el : JSON.parse(el; null=missing)
+    parser(el) = ismissing(el) ? el : identity.(JSON.parse(el; null=missing))
     for (col, type) in pairs(metadata.meta["type_map"])
         if type == "list"
             df[!, col] = parser.(df[!, col])
