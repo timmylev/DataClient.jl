@@ -1,174 +1,50 @@
-using AWS.AWSExceptions: AWSException
-using TimeZones: zdt2unix
-
-const ColumnTypes = Dict{String,Union{DataType,Union}}
+######################################################################
+#####   Type Definitions                                          ####
+######################################################################
 
 """
     Store
 
-The abstract type `Store` where all other stores are sub-typed from.
+The (root) abstract type `Store`
 """
 abstract type Store end
 
 """
-    S3Store
-
-An abstract sub-type of [`Store`](@ref) and super-type to all S3-based stores.
-"""
-abstract type S3Store <: Store end
-
-"""
-    S3DB
-
-A concrete sub-type of [`S3Store`](@ref) that is used to represent the storage location
-of S3DB data, i.e. the location in S3 where the Datafeeds Transmuters output data to.
-S3DB stores are read-only, so one can perform [`list_datasets`](@ref) and 
-[`gather`](@ref) operations but not [`insert`](@ref) operations. This also means that
-the DataClient has no control over what format or structure the data is stored in, thus
-must conform to the standards set by Datafeeds.
-"""
-struct S3DB <: S3Store
-    bucket::String
-    prefix::String
-end
-
-"""
-    FFS
-
-A concrete sub-type of [`S3Store`](@ref) that is used to represent the storage location
-of a Market Sims Flat File Store, i.e. the location in S3 where manually derived
-datasets (non-datafeeds) are stored. All datasets within a FFS are stored via the
-DataClient's own [`insert`](@ref) function, therefore the DataClient has full control
-over the implementation details of an FFS.
-"""
-struct FFS <: S3Store
-    bucket::String
-    prefix::String
-end
-
-"""
     Metadata
 
-The abstract type for a dataset's metadata.
+The (root) abstract type for a dataset's metadata.
 """
 abstract type Metadata end
 
-"""
-    S3DBMeta
-
-Metadata for a [`S3DB`](@ref) dataset.
-"""
-struct S3DBMeta <: Metadata
-    collection::String
-    dataset::String
-    store::S3DB
-    timezone::TimeZone
-    meta::Dict{String,Any}
-end
+######################################################################
+#####   Utility Functions                                         ####
+######################################################################
 
 """
-    FFSMeta
-
-Metadata for a [`FFS`](@ref) dataset.
-"""
-Base.@kwdef struct FFSMeta <: Metadata
-    collection::String
-    dataset::String
-    store::FFS
-    column_order::Vector{String}
-    column_types::ColumnTypes
-    timezone::TimeZone
-    last_modified::ZonedDateTime
-    details::Union{Nothing,Dict{String,String}} = nothing
-end
-
-"""
-    get_metadata(coll::String, ds::String, store::S3DB)::S3DBMeta
-
-Retrieves the metadata for a dataset from the [`S3DB`](@ref) store.
-"""
-function get_metadata(coll::String, ds::String, store::S3DB)::S3DBMeta
-    s3_key = generate_s3_metadata_key(coll, ds, store)
-
-    data = _load_metadata_file(store.bucket, s3_key, coll, ds)
-    tz = get_tz(coll, ds)
-
-    return S3DBMeta(coll, ds, store, tz, data)
-end
-
-"""
-    get_metadata(coll::String, ds::String, store::FFS)::FFSMeta
-
-Retrieves the metadata for a dataset from the [`FFS`](@ref) store.
-"""
-function get_metadata(coll::String, ds::String, store::FFS)::FFSMeta
-    s3_key = generate_s3_metadata_key(coll, ds, store)
-
-    data = _load_metadata_file(store.bucket, s3_key, coll, ds)
-    tz = TimeZone(data["timezone"])
-    column_types = Dict(k => decode_type(v) for (k, v) in pairs(data["column_types"]))
-    return FFSMeta(;
-        collection=coll,
-        dataset=ds,
-        store=store,
-        column_order=data["column_order"],
-        column_types=column_types,
-        timezone=tz,
-        last_modified=unix2zdt(data["last_modified"]),
-        details=data["details"],
-    )
-end
-
-function _load_metadata_file(bucket::String, key::String, coll::String, ds::String)
-    return try
-        file = @mock s3_cached_get(bucket, key)
-        JSON.parse(read(file, String))
-    catch err
-        if isa(err, AWSException) && err.code == "NoSuchKey"
-            rethrow(MissingDataError(coll, ds))
-        else
-            throw(err)
-        end
-    end
-end
-
-"""
-    write_metadata(metadata::FFSMeta)
-
-Writes the metadata for a dataset to its [`FFS`](@ref) store.
-"""
-function write_metadata(metadata::FFSMeta)
-    s3key = generate_s3_metadata_key(metadata.collection, metadata.dataset, metadata.store)
-    data = Dict(
-        "column_order" => metadata.column_order,
-        "column_types" => Dict(k => encode_type(v) for (k, v) in metadata.column_types),
-        "timezone" => metadata.timezone.name,
-        "last_modified" => zdt2unix(Int, metadata.last_modified),
-        "details" => metadata.details,
-    )
-    @mock s3_put(metadata.store.bucket, s3key, JSON.json(data))
-    return nothing
-end
-
-"""
-    decode_type(str::AbstractString)::Union{DataType,Union}
+    decode_type(el::AbstractString)::Type
+    decode_type(compound::Vector)::Type
 
 Decodes a DataType or Union that was encoded using [`encode_type`](@ref).
 """
-function decode_type(str::AbstractString)::Union{DataType,Union}
-    parts = split(str, ":")
-    if length(parts) == 1
-        el = parts[1]
-        try
-            return haskey(CUSTOM_TYPES, el) ? CUSTOM_TYPES[el] : getfield(Base, Symbol(el))
-        catch err
-            throw(ErrorException("Unable to decode custom type '$el'."))
-        end
-    elseif parts[1] == "Union"
-        # recurse
-        return eval(Expr(:curly, [Symbol(decode_type(el)) for el in parts]...))
+function decode_type(el::AbstractString)::Type
+    return try
+        return haskey(CUSTOM_TYPES, el) ? CUSTOM_TYPES[el] : getfield(Base, Symbol(el))
+    catch err
+        throw(ErrorException("Custom decoding failed for type '$el'."))
+    end
+end
+
+function decode_type(compound::Vector)::Type
+    return if compound[1] == "Union"
+        eval(Expr(:curly, :Union, [decode_type(el) for el in compound[2:end]]...))
+    elseif compound[1] == "Array"
+        type, dims = compound[2:3]
+        Array{decode_type(type),dims}
+    elseif compound[1] == "ParametricArray"
+        type, dims = compound[2:3]
+        Array{T,dims} where {T<:decode_type(type)}
     else
-        throw(ErrorException("Unable to decode custom type '$str'."))
+        throw(ErrorException("Custom decoding failed for type '$compound'."))
     end
 end
 
@@ -178,30 +54,59 @@ end
 
 Encodes a DataType or Union as a String.
 """
-function encode_type(data_type::DataType)::String
-    return get(_CUSTOM_TYPES, data_type, repr(data_type))
+function encode_type(data_type::DataType)::Union{Vector,String}
+    return if nameof(data_type) == :Array
+        type, dims = data_type.parameters
+        ["Array", encode_type(type), dims]
+    elseif data_type in keys(_CUSTOM_TYPES)
+        _CUSTOM_TYPES[data_type]
+    else
+        encoded = repr(data_type)
+        if isdefined(Base, Symbol(encoded)) && isempty(data_type.parameters)
+            encoded
+        else
+            throw(ErrorException("Custom encoding failed for type '$data_type'."))
+        end
+    end
 end
 
-function encode_type(data_type::Union)::String
-    parts = Set([encode_type(el) for el in Base.uniontypes(data_type)])
-    return join(["Union", parts...], ":")
+function encode_type(data_type::Union)::Vector
+    inner_types = [encode_type(el) for el in Base.uniontypes(data_type)]
+    return ["Union", inner_types...]
+end
+
+function encode_type(data_type::UnionAll)::Vector
+    return if data_type.body.name.name == :Array
+        dims = data_type.body.parameters[2]
+        parametric_type = encode_type(data_type.var.ub)
+        ["ParametricArray", parametric_type, dims]
+    else
+        throw(ErrorException("Custom encoding failed for type '$data_type'."))
+    end
 end
 
 """
-    sanitize_type(data_type::DataType)::DataType
+    sanitize_type(data_type::DataType)::Union{DataType,UnionAll}
+    sanitize_type(data_type::UnionAll)::UnionAll
     sanitize_type(data_type::Union)::Union
 
 Converts certain Types (or Union of Types) to their respective AbstractTypes:
-- `AbstractString` : for all `<: AbstractString`
-- `AbstractFloat`  : for all `<: AbstractFloat`
-- `Integer`        : for all `<: Integer`, except for `Bool` which remains a `Bool`
+- `String`                     -> `AbstractString`
+- `Union{Float64,Int}`         -> Union{AbstractFloat,Integer}
+- `Vector{Int}`                -> Vector{T} where T <: Integer
+- `Vector{Union{Float64,Int}}` -> Vector{T} where T<:Union{AbstractFloat, Integer}
+
 
 ## Developer Note
 This is used to generate a column type map for dataset columns. The type map will be
 used to validate future insertion of new data (DataFrame).
 """
-function sanitize_type(data_type::DataType)::DataType
-    return if data_type <: AbstractString
+function sanitize_type(data_type::DataType)::Union{DataType,UnionAll}
+    return if data_type.name.name == :Array
+        inner_type = sanitize_type(data_type.parameters[1])
+        dims = data_type.parameters[2]
+        Array{T,dims} where {T<:inner_type}
+    elseif data_type <: AbstractString
         AbstractString
     elseif data_type == Bool
         # note that Bool <: Integer
@@ -215,8 +120,18 @@ function sanitize_type(data_type::DataType)::DataType
     end
 end
 
+function sanitize_type(data_type::UnionAll)::UnionAll
+    return if data_type.body.name.name == :Array
+        abs_type = sanitize_type(data_type.var.ub)
+        dims = data_type.body.parameters[2]
+        Array{T,dims} where {T<:abs_type}
+    else
+        throw(ErrorException("Unable to sanitize type '$data_type'."))
+    end
+end
+
 function sanitize_type(data_type::Union)::Union
-    inner_types = [Symbol(sanitize_type(el)) for el in Base.uniontypes(data_type)]
+    inner_types = [sanitize_type(el) for el in Base.uniontypes(data_type)]
     return eval(Expr(:curly, [:Union, inner_types...]...))  # reconstructs the Union
 end
 
@@ -247,54 +162,6 @@ julia> unix2zdt(ts, tz"America/New_York")
         warn(LOGGER, "Unable to localize '$dt' (UTC) as '$tz', falling back to 'UTC'.")
         ZonedDateTime(dt, tz"UTC"; from_utc=true)
     end
-end
-
-"""
-    utc_day_floor(dt::ZonedDateTime)::ZonedDateTime
-
-Converts a `ZonedDateTime` to UTC and day-floors it. Function calls are `@memoize`-ed.
-"""
-@memoize function utc_day_floor(dt::ZonedDateTime)::ZonedDateTime
-    return floor(astimezone(dt, tz"UTC"), Dates.Day)
-end
-
-"""
-    get_s3_file_timestamp(s3_key::String)::Int
-
-Extracts the unix timestamp from `S3DB` and `FFS` file s3 keys.
-"""
-function get_s3_file_timestamp(s3_key::String)::Int
-    file_name = rsplit(s3_key, "/"; limit=2)[end]
-    return parse(Int, split(file_name, "."; limit=2)[1])
-end
-
-"""
-    generate_s3_file_key(
-        collection::AbstractString, dataset::AbstractString, dt::ZonedDateTime, store::S3Store
-    )::String
-
-Generates the s3 key for a `S3DB` and/or `FFS` file.
-"""
-function generate_s3_file_key(
-    collection::AbstractString, dataset::AbstractString, dt::ZonedDateTime, store::S3Store
-)::String
-    day = utc_day_floor(dt)
-    year = Dates.year(day)
-    file_name = "$(zdt2unix(Int, day)).csv.gz"
-    return joinpath(store.prefix, collection, dataset, "year=$(year)", file_name)
-end
-
-"""
-    generate_s3_metadata_key(
-        collection::AbstractString, dataset::AbstractString, store::S3Store
-    )::String
-
-Generates the s3 key for a `S3DB` and/or `FFS` dataset metadata file.
-"""
-function generate_s3_metadata_key(
-    collection::AbstractString, dataset::AbstractString, store::S3Store
-)::String
-    return joinpath(store.prefix, collection, dataset, "METADATA.json")
 end
 
 function s_fmt(s::Union{Integer,AbstractFloat})::Dates.CompoundPeriod

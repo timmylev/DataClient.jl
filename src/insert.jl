@@ -1,6 +1,7 @@
 using TimeZones: zdt2unix
 
 const to = TimerOutput()
+const _INSERT_ASYNC_NTASKS = 8
 
 """
     insert(
@@ -10,17 +11,16 @@ const to = TimerOutput()
         store_id::AbstractString;
         details::Union{Nothing,Dict{String,String}}=nothing,
         column_types::Union{Nothing,Dict}=nothing,
+        index::Union{Nothing,Index}=nothing,
+        storage_format::Union{Nothing,StorageFormat}=nothing,
     )
 
-Inserts a `DataFrame` into a new or existing dataset in the specified store.
-
-The insert operation is only supported for [`FFS`](@ref)-type stores. The input
-`DataFrame` must contain a `target_start` column of type `ZonedDateTime`. This column
-is used as the index when querying for data using the [`gather`](@ref) function.
+Inserts a `DataFrame` into a new or existing dataset in the specified store. The insert
+operation is only supported for [`FFS`](@ref)-type stores.
 
 If inserting data into an existing dataset, the input `DataFrame` will be merged and
 deduplicated with any pre-existing data within the dataset. The process will fail if the
-input `DataFrame` has any missing columns or incompatible column types.
+input `DataFrame` has incompatible column types.
 
 # Arguments
 - `collection`: The name of the dataset's collection
@@ -42,6 +42,14 @@ input `DataFrame` has any missing columns or incompatible column types.
     type, or, allow missing values (using Union{Missing,T}). This keyword supports just
     that by overwriting the default generated type for the column. Attempting to modify
     the type map of an existing dataset is not supported and will result in an error.
+
+!!! note "Dataset Indexing"
+    When creating a new dataset, one of the input `DataFrame` columns must be available
+    to be used as the dataset's index, i.e. the column that the [`gather`](@ref) query
+    uses to filter for data. The index can only be configured when creating a new dataset
+    and it is done so with the `index` kwarg. Currently, only the [`TimeSeriesIndex`](@ref)
+    is supported, where the selected column must a of type `ZonedDateTime`. If none is
+    configured, the default index used will be `TimeSeriesIndex("target_start", DAY)`.
 
 ## Example for Specifying Column Types
 ```julia
@@ -89,11 +97,25 @@ function insert(
     store_id::AbstractString;
     details::Union{Nothing,Dict{String,String}}=nothing,
     column_types::Union{Nothing,Dict}=nothing,
+    index::Union{Nothing,Index}=nothing,
+    storage_format::Union{Nothing,StorageFormat}=nothing,
 )
+    if isempty(dataframe)
+        throw(DataFrameError("Dataframe must not be empty."))
+    end
+
     store = get_backend(store_id)
     c_types = isnothing(column_types) ? nothing : convert(ColumnTypes, column_types)
+
     return _insert(
-        collection, dataset, dataframe, store; details=details, column_types=c_types
+        collection,
+        dataset,
+        dataframe,
+        store;
+        details=details,
+        column_types=c_types,
+        index=index,
+        storage_format=storage_format,
     )
 end
 
@@ -104,25 +126,34 @@ function _insert(
     store::FFS;
     details::Union{Nothing,Dict{String,String}}=nothing,
     column_types::Union{Nothing,ColumnTypes}=nothing,
+    index::Union{Nothing,Index}=nothing,
+    storage_format::Union{Nothing,StorageFormat}=nothing,
 )
+    # Using a global timer because we're also timing stuff in external called functions.
     reset_timer!(to)
 
-    _validate(dataframe, store)
-    @timeit to "ensure_created" metadata = @mock _ensure_created(
-        collection, dataset, dataframe, store; details=details, column_types=column_types
+    @timeit to "ensure_created" meta = @mock _ensure_created(
+        collection,
+        dataset,
+        dataframe,
+        isnothing(index) ? TimeSeriesIndex("target_start", DAY) : index,
+        isnothing(storage_format) ? CSV_GZ : storage_format,
+        store;
+        details=details,
+        column_types=column_types,
     )
 
-    @memoize groupkey(zdt) = zdt2unix(Int, utc_day_floor(zdt))
-    # add a group key column
-    @timeit to "create_partitions" begin
-        dataframe.group_key = map(groupkey, dataframe.target_start)
-        grouped = groupby(dataframe, :group_key)
-    end
+    # Due to some limitations in the DataFrames.groupby function (and to avoid making
+    # the code more complicated), the resulting SubDataFrame representing each partition
+    # will have an extra "group_key" column. That's fine as we'll just filter it out
+    # later when writing to disk/s3.
+    @timeit to "create_partitions" partitions = create_partitions(dataframe, meta)
 
     @timeit to "async loop" begin
-        asyncmap(pairs(grouped); ntasks=8) do (gk, sf)
-            s3key = generate_s3_file_key(collection, dataset, unix2zdt(gk.group_key), store)
-            @mock _merge(sf, s3key, metadata)
+        asyncmap(pairs(partitions); ntasks=_INSERT_ASYNC_NTASKS) do (gk, sf)
+            indexed_val = first(sf[!, meta.index.key])  # any row will work
+            s3key = gen_s3_file_key(indexed_val, meta)
+            @mock _merge(sf, s3key, meta)
         end
     end
 
@@ -135,8 +166,6 @@ function _insert(
         "Timing for _insert():\n" * String(take!(temp))
     end
 
-    # remove the group key column
-    select!(dataframe, Not(:group_key))
     return nothing
 end
 
@@ -159,11 +188,13 @@ function _merge(dataframe::AbstractDataFrame, s3key::AbstractString, metadata::F
         end
     end
 
-    # check if there is existing data in S3
     bucket = metadata.store.bucket
+    storage_format = get_storage_format(metadata)
+
+    # check if there is existing data in S3
     existing = try
         obj = @mock s3_get(bucket, s3key; retry=false)
-        @timeit to "load_existing" existing = DataFrame(CSV.File(obj))
+        @timeit to "load_existing" existing = load_df(storage_format, obj)
     catch err
         isa(err, AWSException) && err.code == "NoSuchKey" || throw(err)
         DataFrame()
@@ -180,31 +211,10 @@ function _merge(dataframe::AbstractDataFrame, s3key::AbstractString, metadata::F
         "total rows for '$s3key'.",
     )
 
-    stream = IOBuffer()
-    @timeit to "to_csv_gz" CSV.write(stream, merged; compress=true)
-    # the stream is closed after compression, so use stream.data to access data
-    @mock s3_put(bucket, s3key, stream.data)
+    @timeit to "to_csv_gz" data = write_df(storage_format, merged)
+    @mock s3_put(bucket, s3key, data)
 
     return nothing
-end
-
-"""
-    _validate(dataframe::DataFrame, ::FFS)
-
-Runs validations on the input DataFrame to ensure that it satisfies the basic dataset
-requirements.
-"""
-function _validate(dataframe::DataFrame, ::FFS)
-    if isempty(dataframe)
-        throw(DataFrameError("Dataframe must not be empty."))
-
-    elseif !("target_start" in names(dataframe))
-        throw(DataFrameError("Missing required column `target_start` for insert."))
-
-    elseif eltype(dataframe.target_start) != ZonedDateTime
-        tp = eltype(dataframe.target_start)
-        throw(DataFrameError("Column `target_start` must be a ZonedDateTime, found $tp."))
-    end
 end
 
 """
@@ -212,6 +222,8 @@ end
         collection::AbstractString,
         dataset::AbstractString,
         dataframe::DataFrame,
+        index::Index,
+        storage_format::StorageFormat,
         store::FFS;
         details::Union{Nothing,Dict{String,String}}=nothing,
         column_types::Union{Nothing,ColumnTypes}=nothing,
@@ -225,6 +237,8 @@ function _ensure_created(
     collection::AbstractString,
     dataset::AbstractString,
     dataframe::DataFrame,
+    index::Index,
+    storage_format::StorageFormat,
     store::FFS;
     details::Union{Nothing,Dict{String,String}}=nothing,
     column_types::Union{Nothing,ColumnTypes}=nothing,
@@ -239,11 +253,7 @@ function _ensure_created(
     to_write = nothing
 
     if !isnothing(metadata)
-        _validate_columns(dataframe, metadata)
-
-        if !isnothing(column_types)
-            warn(LOGGER, "Ignoring param `column_types`, dataset is already created.")
-        end
+        _validate_dataframe(dataframe, metadata)
 
         # Check if the existing dataset's metadata needs updating:
         # - update the metadata details if new details are specified
@@ -264,6 +274,8 @@ function _ensure_created(
                 column_order=metadata.column_order,
                 column_types=metadata.column_types,
                 timezone=metadata.timezone,
+                index=metadata.index,
+                storage_format=metadata.storage_format,
                 last_modified=now(tz"UTC"),  # update
                 details=updated_details,  # update
             )
@@ -302,13 +314,15 @@ function _ensure_created(
             column_order=col_order,
             column_types=col_types,
             timezone=df_tz,
+            index=index,
+            storage_format=storage_format,
             last_modified=now(tz"UTC"),
             details=details,
         )
 
         # In case we're using user-defined columns and types, run a validation to ensure
         # that it is compatible with the input dataframe.
-        _validate_columns(dataframe, to_write; user_defined=true)
+        _validate_dataframe(dataframe, to_write; user_defined=true)
     end
 
     if !isnothing(to_write)
@@ -319,13 +333,15 @@ function _ensure_created(
 end
 
 """
-    _validate_columns(dataframe::DataFrame, metadata::FFSMeta; user_defined::Bool=false)
+    _validate_dataframe(dataframe::DataFrame, metadata::FFSMeta; user_defined::Bool=false)
 
 Validates a DataFrame's columns and types against the provided metadata.
 """
-function _validate_columns(
+function _validate_dataframe(
     dataframe::DataFrame, metadata::FFSMeta; user_defined::Bool=false
 )
+    _validate_dataframe(dataframe, metadata.index)
+
     ds = "'$(metadata.collection)-$(metadata.dataset)'"
 
     # ensure that all required cols are present, and warn if there are extra cols
@@ -362,5 +378,15 @@ function _validate_columns(
                 ),
             )
         end
+    end
+end
+
+function _validate_dataframe(dataframe::DataFrame, index::TimeSeriesIndex)
+    if !(index.key in names(dataframe))
+        throw(DataFrameError("Missing required index column `$(index.key)`."))
+
+    elseif eltype(dataframe[!, index.key]) != ZonedDateTime
+        tp = eltype(dataframe[!, index.key])
+        throw(DataFrameError("Column `$(index.key)` must be a ZonedDateTime, found $tp."))
     end
 end

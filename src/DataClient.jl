@@ -20,13 +20,16 @@ export ConfigFileError, DataFrameError, MissingDataError
 export reload_configs, get_backend
 export list_datasets, gather, insert
 
+export TimeSeriesIndex, HOUR, DAY, MONTH, YEAR
+export CSV_GZ
+
 const LOGGER = getlogger(@__MODULE__)
 
 # register/hardcode any centralized stores here
 const CENTRALIZED_STORES = OrderedDict{String,String}(
     "datafeeds" => "s3db:s3://invenia-datafeeds-output/version5/aurora/gz/",
-    "public-data" => "ffs:s3://invenia-private-datasets/DataClient/V1/",
-    "miso-nda" => "ffs:s3://invenia-miso-nda-5twngkbmrczu6xd9uppda18b5995yuse1a-s3alias/derived_works/DataClient/V1/",
+    "public-data" => "ffs:s3://invenia-private-datasets/DataClient/FFS/CSV_GZ/",
+    "miso-nda" => "ffs:s3://invenia-miso-nda-5twngkbmrczu6xd9uppda18b5995yuse1a-s3alias/derived_works/DataClient/FFS/CSV_GZ/",
 )
 # https://gitlab.invenia.ca/invenia/TabularDataSchema/-/blob/master/versions/2017-05-02_001.md
 const BOUNDS = Dict{Int,String3}(0 => "()", 1 => "[)", 2 => "(]", 3 => "[]")
@@ -65,7 +68,9 @@ include("AWSUtils/AWSUtils.jl")
 
 include("exceptions.jl")
 include("common.jl")
+include("formats.jl")
 include("configs.jl")
+include("s3store.jl")
 include("list.jl")
 include("gather.jl")
 include("insert.jl")
