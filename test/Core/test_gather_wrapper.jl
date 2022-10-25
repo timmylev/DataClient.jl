@@ -58,6 +58,8 @@ using TimeZones: zdt2unix
                 "tag" => AbstractString,
             ),
             timezone=TZ,
+            index=TimeSeriesIndex("target_start", DAY),
+            storage_format=CSV_GZ,
             last_modified=ZonedDateTime(2022, 1, 1, tz"UTC"),
         )
     end

@@ -1,5 +1,4 @@
 using AWS.AWSExceptions: AWSException
-using DataClient: get_s3_file_timestamp
 using Dates
 using HTTP: StatusError
 
@@ -10,13 +9,13 @@ dt2unix(dt::DateTime) = convert(Int, datetime2unix(dt))
 dt2unix(args...) = convert(Int, datetime2unix(DateTime(args...)))
 
 """
-    get_test_data(s3_key::String, ex=nothing)::IOStream
+    get_test_data(s3_key::String, ex=nothing)::String
 
 Loads in a test file from 'test/files/s3db_data/' when given an S3 key.
 This is used to mock the S3 GET operations.
 Optionally provide an exception to throw if a file does not exist.
 """
-function get_test_data(s3_key::String, ex=nothing)::IOStream
+function get_test_data(s3_key::String, ex=nothing)::String
     path = joinpath(@__DIR__, "files", "data", s3_key)
 
     if !isfile(path)
@@ -24,5 +23,5 @@ function get_test_data(s3_key::String, ex=nothing)::IOStream
         throw(ex)
     end
 
-    return open(path, "r")
+    return path
 end

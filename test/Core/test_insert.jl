@@ -7,31 +7,36 @@ using DataClient:
     _ensure_created,
     _merge,
     _process_dataframe!,
-    _validate,
-    get_s3_file_timestamp,
+    _validate_dataframe,
+    gen_s3_file_key,
     get_metadata,
     unix2zdt,
     write_metadata
+using DataClient.AWSUtils: s3_cached_get
 using DataFrames
 using TimeZones
 
 @testset "test src/insert.jl" begin
+    key = "target_start"
+    index = TimeSeriesIndex(key, DAY)
+    fmt = CSV_GZ
     dummy_ffs = FFS("bucket", "prefix")
 
-    @testset "test _validate" begin
-        df = DataFrame()
-        @test_throws DataFrameError("Dataframe must not be empty.") _validate(df, dummy_ffs)
+    @testset "test _validate_dataframe" begin
+        @testset "index" begin
+            # test missing index column
+            df = DataFrame(; a=[1, 2, 3], b=[4, 5, 6])
+            @test_throws DataFrameError("Missing required index column `$key`.") _validate_dataframe(
+                df, index
+            )
 
-        df = DataFrame(; a=[1, 2, 3], b=[4, 5, 6])
-        @test_throws DataFrameError("Missing required column `target_start` for insert.") _validate(
-            df, dummy_ffs
-        )
-
-        df = DataFrame(; target_start=[1, 2, 3], b=[4, 5, 6])
-        tp = eltype(df.target_start)
-        @test_throws DataFrameError(
-            "Column `target_start` must be a ZonedDateTime, found $tp."
-        ) _validate(df, dummy_ffs)
+            # test index column invalid type
+            df = DataFrame(; target_start=[1, 2, 3], b=[4, 5, 6])
+            tp = eltype(df.target_start)
+            @test_throws DataFrameError("Column `$key` must be a ZonedDateTime, found $tp.") _validate_dataframe(
+                df, index
+            )
+        end
     end
 
     @testset "test _ensure_created" begin
@@ -68,6 +73,8 @@ using TimeZones
                 column_order=column_order,
                 column_types=column_types,
                 timezone=tz,
+                index=index,
+                storage_format=fmt,
                 last_modified=freezed_now,
                 details=details,
             )
@@ -91,7 +98,7 @@ using TimeZones
                             DC_LOGGER,
                             "debug",
                             "Metadata for '$coll-$ds' does not exist, creating metadata...",
-                            _ensure_created(coll, ds, test_df, dummy_ffs),
+                            _ensure_created(coll, ds, test_df, index, fmt, dummy_ffs),
                         )
                     end
 
@@ -105,7 +112,7 @@ using TimeZones
                     custom = Dict("val_a" => Int64, "val_b" => Union{Missing,String})
                     col_types::ColumnTypes = merge(column_types, custom)
                     evaluated = _ensure_created(
-                        coll, ds, test_df, dummy_ffs; column_types=col_types
+                        coll, ds, test_df, index, fmt, dummy_ffs; column_types=col_types
                     )
 
                     expected = gen_metadata(; column_types=col_types)
@@ -122,7 +129,7 @@ using TimeZones
                         "The column '$col' in the user-defined `column_types` " *
                             "is not present in the input DataFrame, ignoring it...",
                         _ensure_created(
-                            coll, ds, test_df, dummy_ffs; column_types=col_types
+                            coll, ds, test_df, index, fmt, dummy_ffs; column_types=col_types
                         ),
                     )
 
@@ -138,7 +145,9 @@ using TimeZones
                     @test_throws DataFrameError(
                         "The input DataFrame column 'val_a' has type 'Int64' which is" *
                         " incompatible with the user-defined type of 'String'",
-                    ) _ensure_created(coll, ds, test_df, dummy_ffs; column_types=col_types)
+                    ) _ensure_created(
+                        coll, ds, test_df, index, fmt, dummy_ffs; column_types=col_types
+                    )
                 end
             end
         end
@@ -151,7 +160,7 @@ using TimeZones
             apply([patched_get, patched_write, patched_now]) do
                 @test_throws DataFrameError(
                     "Missing required columns [\"new_column\"] for dataset '$coll-$ds'."
-                ) _ensure_created(coll, ds, test_df, dummy_ffs)
+                ) _ensure_created(coll, ds, test_df, index, fmt, dummy_ffs)
             end
         end
 
@@ -166,7 +175,7 @@ using TimeZones
                     "warn",
                     "Extra columns [\"val_b\"] found in the input DataFrame for " *
                         "dataset '$coll-$ds' will be ignored.",
-                    _ensure_created(coll, ds, test_df, dummy_ffs),
+                    _ensure_created(coll, ds, test_df, index, fmt, dummy_ffs),
                 )
             end
         end
@@ -181,27 +190,13 @@ using TimeZones
                 @test_throws DataFrameError(
                     "The input DataFrame column 'val_a' has type 'ZonedDateTime' " *
                     "which is incompatible with the stored type of 'Integer'",
-                ) _ensure_created(coll, ds, df, dummy_ffs)
+                ) _ensure_created(coll, ds, df, index, fmt, dummy_ffs)
 
                 # test using a DF with different but still compatible column types
                 df = copy(test_df)
                 df.val_a = convert.(UInt8, df[!, :val_a])
                 # no error is thrown
-                _ensure_created(coll, ds, df, dummy_ffs)
-            end
-        end
-
-        @testset "test existing_dataset: specify column types" begin
-            patched_get = @patch get_metadata(args...) = gen_metadata()
-
-            apply([patched_get, patched_write]) do
-                col_types::ColumnTypes = Dict("val_a" => String)
-                @test_log(
-                    DC_LOGGER,
-                    "warn",
-                    "Ignoring param `column_types`, dataset is already created.",
-                    _ensure_created(coll, ds, test_df, dummy_ffs; column_types=col_types)
-                )
+                _ensure_created(coll, ds, df, index, fmt, dummy_ffs)
             end
         end
 
@@ -220,7 +215,7 @@ using TimeZones
                 to_update = Dict("k2" => "new", "k3" => "new")
                 expected = Dict("k1" => "old", "k2" => "new", "k3" => "new")
 
-                _ensure_created(coll, ds, test_df, dummy_ffs; details=to_update)
+                _ensure_created(coll, ds, test_df, index, fmt, dummy_ffs; details=to_update)
 
                 @test CALLED_WITH["metadata"].details == expected
             end
@@ -252,6 +247,8 @@ using TimeZones
                 "tag" => AbstractString,
             ),
             timezone=tz,
+            index=index,
+            storage_format=fmt,
             last_modified=ZonedDateTime(2022, 1, 1, tz"UTC"),
         )
 
@@ -333,12 +330,24 @@ using TimeZones
     end
 
     @testset "test insert FFS" begin
+        test_metadata = FFSMeta(;
+            collection="test-coll",
+            dataset="test-ds",
+            store=FFS("test-bucket", "test-prefix"),
+            column_order=["target_start"],
+            column_types=Dict("target_start" => ZonedDateTime),
+            timezone=tz"UTC",
+            index=index,
+            storage_format=fmt,
+            last_modified=ZonedDateTime(2022, 1, 1, tz"UTC"),
+        )
+
         CALL_TRACKER = Dict{String,DataFrame}()
         patched_merge = @patch function _merge(df, s3key, metadata)
             CALL_TRACKER[s3key] = df
             return nothing
         end
-        patched_ensure = @patch _ensure_created(args...; kwargs...) = nothing
+        patched_ensure = @patch _ensure_created(args...; kwargs...) = test_metadata
 
         apply([patched_merge, patched_ensure]) do
             # Note that this input df spans 3 days, so it should be partitined into 3
@@ -354,21 +363,22 @@ using TimeZones
                     ZonedDateTime(2020, 1, 3, 2, tz"UTC"),
                 ],
             )
-
-            expected = Dict{Int,Vector{ZonedDateTime}}(
-                1577836800 => [
+            parts = [
+                [
                     ZonedDateTime(2020, 1, 1, 1, tz"UTC"),
                     ZonedDateTime(2020, 1, 1, 2, tz"UTC"),
                 ],
-                1577923200 => [
+                [
                     ZonedDateTime(2020, 1, 2, 1, tz"UTC"),
                     ZonedDateTime(2020, 1, 2, 2, tz"UTC"),
                 ],
-                1578009600 => [
+                [
                     ZonedDateTime(2020, 1, 3, 1, tz"UTC"),
                     ZonedDateTime(2020, 1, 3, 2, tz"UTC"),
                 ],
-            )
+            ]
+
+            expected = Dict(gen_s3_file_key(p[1], test_metadata) => p for p in parts)
 
             reload_configs(
                 joinpath(@__DIR__, "..", "files", "configs", "configs_valid.yaml")
@@ -376,8 +386,7 @@ using TimeZones
             insert("test-coll", "test-ds", input_df, "myffs")
 
             for (s3key, df) in pairs(CALL_TRACKER)
-                ts = get_s3_file_timestamp(s3key)
-                @test expected[ts] == df.target_start
+                @test expected[s3key] == df.target_start
             end
         end
     end

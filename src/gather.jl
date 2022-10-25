@@ -2,6 +2,8 @@ using .AWSUtils: s3_cached_get
 using AWS.AWSExceptions: AWSException
 using TimeZones: zdt2unix
 
+const _GATHER_ASYNC_NTASKS = 8
+
 """
     gather(
         collection::AbstractString,
@@ -16,13 +18,15 @@ Gathers data from a target dataset as a `DataFrame`.
 # Arguments
 - `collection`: The name of the dataset's collection
 - `dataset`: The name of the dataset
-- `start_dt`: The start bound (inclusive) of the `target_start` column .
-- `end_dt`: The end bound (inclusive) for the `target_start` column.
+- `start_dt`: The start bound (inclusive) of the `Index` column .
+- `end_dt`: The end bound (inclusive) for the `Index` column.
 - `store_id`: (Optional) The backend store id.
 
 !!! note "IMPORTANT"
-    The `start_dt` and `end_dt` filters are only applied to the `target_start` column of
-    the dataset. The `target_end` column (if available) is irrelevant.
+    The `start_dt` and `end_dt` filters are only applied to the `Index` column of the
+    dataset. For `S3DB`(@ref) datsets, this is always the `target_start` column. For
+    `FFS`(@ref) datasets, it will depend on which column was set as the index when the
+    dataset was first created. Any "target_end" column (if available) is irrelevant.
 
 !!! note
     It is recommended to specify a `store_id` for efficiency reasons. If none is provided,
@@ -33,19 +37,25 @@ Gathers data from a target dataset as a `DataFrame`.
 function gather(
     collection::AbstractString,
     dataset::AbstractString,
-    start_dt::ZonedDateTime,
-    end_dt::ZonedDateTime,
+    start::ZonedDateTime,
+    stop::ZonedDateTime,
 )::DataFrame
     # get_backend() returns an OrderedDict, i.e. the search order in configs.yaml
     for (name, store) in pairs(get_backend())
-        data = _gather(collection, dataset, start_dt, end_dt, store)
+        data = nothing
 
-        if !isempty(data)
+        try
+            data = _gather(collection, dataset, start, stop, store)
+        catch err
+            isa(err, MissingDataError) || throw(err)
+        end
+
+        if !isnothing(data) && !isempty(data)
             return data
         end
     end
 
-    throw(MissingDataError(collection, dataset, start_dt, end_dt))
+    throw(MissingDataError(collection, dataset, start, stop))
 end
 
 function gather(
@@ -65,147 +75,102 @@ function gather(
 end
 
 function _gather(
-    collection::AbstractString,
-    dataset::AbstractString,
-    start_dt::ZonedDateTime,
-    end_dt::ZonedDateTime,
-    store::S3Store,
-)::DataFrame
-    # - If grabbing many files, do a s3-list first to filter out missing files.
-    # - If grabbing a few files, it's faster to skip the list and attempt to s3-get directly.
-    t1 = @elapsed file_keys = if end_dt - start_dt > Day(10)
-        @mock _find_s3_files(collection, dataset, start_dt, end_dt, store)
-    else
-        @mock _generate_keys(collection, dataset, start_dt, end_dt, store)
+    collection::AbstractString, dataset::AbstractString, start::T, stop::T, store::S3Store
+)::DataFrame where {T}
+    meta = @mock get_metadata(collection, dataset, store)
+    ds_name = "'$(meta.collection)-$(meta.dataset)'"
+
+    keys = gen_s3_file_keys(start, stop, meta)
+    nkeys = length(keys)
+    debug(LOGGER, "Generated $nkeys file keys for $ds_name")
+
+    # If grabbing many files, do a s3-list first to filter out missing files.
+    if length(keys) > _GATHER_ASYNC_NTASKS
+        t1 = @elapsed keys = @mock _filter_missing(keys, meta)
+        nkeys = length(keys)
+        rtime = "($(s_fmt(t1)))"
+        debug(LOGGER, "Listing $nkeys file keys from $ds_name took $rtime")
     end
 
-    ds = "'$collection.$dataset'"
-    num_keys = length(file_keys)
-    debug(LOGGER, "Searching for $num_keys file keys from $ds took ($(s_fmt(t1)))")
-
-    t2 = @elapsed results = @mock _load_s3_files(
-        file_keys, collection, dataset, start_dt, end_dt, store
-    )
-    debug(LOGGER, "Loading and merging $num_keys files from $ds took ($(s_fmt(t2)))")
+    t2 = @elapsed results = @mock _load_s3_files(keys, start, stop, meta)
+    rtime = "($(s_fmt(t2)))"
+    debug(LOGGER, "Loading and merging $nkeys files from $ds_name took $rtime")
 
     return results
 end
 
-function _find_s3_files(
-    collection::AbstractString,
-    dataset::AbstractString,
-    start_dt::ZonedDateTime,
-    end_dt::ZonedDateTime,
-    store::S3Store,
-)::Vector{String}
-    collection_prefix = joinpath(store.prefix, collection, dataset, "")
+function _filter_missing(s3_keys::Vector{String}, meta::S3Meta)::Vector{String}
+    get_s3_dir(s3_key) = "$(rsplit(s3_key, "/"; limit=2)[1])/"
 
-    # - S3DB data is partitioned into 24-hr files
-    # - S3DB files are named after unix timestamps (start of day utc)
-    # - S3DB files are grouped into yearly directories
-    start_day_utc = utc_day_floor(start_dt)
-    end_day_utc = utc_day_floor(end_dt)
-    start_day_unix = zdt2unix(Int, start_day_utc)
-    end_day_unix = zdt2unix(Int, end_day_utc)
+    s3_dirs = Set([get_s3_dir(k) for k in s3_keys])
 
-    dataset_dirs = [
-        joinpath(collection_prefix, "year=$year", "") for
-        year in range(Dates.year(start_day_utc), Dates.year(end_day_utc); step=1)
-    ]
-
-    file_keys = Vector{String}()
+    keys_all = Set(s3_keys)
+    keys_found = Set{String}()
 
     # list all files in the yearly directories and filter for matches.
-    for dir in dataset_dirs
-        for key in @mock s3_list_keys(store.bucket, dir)
-            file_date = get_s3_file_timestamp(key)
-            if file_date >= start_day_unix && file_date <= end_day_unix
-                push!(file_keys, key)
+    for dir in s3_dirs
+        count = 0
+        match = 0
+
+        for key in @mock s3_list_keys(meta.store.bucket, dir)
+            if key in keys_all
+                match += 1
+                push!(keys_found, key)
             end
+            count += 1
         end
+
+        trace(LOGGER, "Listed $count keys with $match matches in s3 prefix: $dir")
     end
 
-    trace(
-        LOGGER,
-        "Found $(length(file_keys)) file keys for dataset '$collection.$dataset' in " *
-        "range [$start_dt, $end_dt]\n - $(join(file_keys, "\n - "))",
-    )
+    keys_missing = setdiff(keys_all, keys_found)
+    keys_found = sort(collect(keys_found))
+    keys_missing = sort(collect(keys_missing))
 
-    return file_keys
-end
+    ratio = "$(length(keys_found))/$(length(keys_all))"
+    msg = "Found $ratio files for $(meta.collection)-$(meta.dataset)"
 
-function _generate_keys(
-    collection::AbstractString,
-    dataset::AbstractString,
-    start_dt::ZonedDateTime,
-    end_dt::ZonedDateTime,
-    store::S3Store,
-)::Vector{String}
-    collection_prefix = joinpath(store.prefix, collection, dataset, "")
+    if !isempty(keys_found)
+        msg *= "\nFiles Found:\n - $(join(keys_found, "\n - "))"
+    end
 
-    # - S3DB data is partitioned into 24-hr files
-    # - S3DB files are named after unix timestamps (start of day utc)
-    # - S3DB files are grouped into yearly directories
-    file_keys = [
-        generate_s3_file_key(collection, dataset, dt, store) for
-        dt in range(utc_day_floor(start_dt), utc_day_floor(end_dt); step=Day(1))
-    ]
+    if !isempty(keys_missing)
+        msg *= "\nFiles Missing:\n - $(join(keys_missing, "\n - "))"
+    end
 
-    trace(
-        LOGGER,
-        "Generated $(length(file_keys)) file keys for dataset '$collection-$dataset'" *
-        "in range [$start_dt, $end_dt]\n - $(join(file_keys, "\n - "))",
-    )
+    trace(LOGGER, msg)
 
-    return file_keys
+    return keys_found
 end
 
 function _load_s3_files(
-    file_keys::Vector{String},
-    collection::AbstractString,
-    dataset::AbstractString,
-    start_dt::ZonedDateTime,
-    end_dt::ZonedDateTime,
-    store::S3Store,
-)::DataFrame
+    file_keys::Vector{String}, start::T, stop::T, meta::S3Meta
+)::DataFrame where {T}
     to = TimerOutput()
+    dfs = Dict{String,DataFrame}()
 
-    dfs = Dict{Int,DataFrame}()
-
-    start_unix = zdt2unix(Int, start_dt)
-    end_unix = zdt2unix(Int, end_dt)
-    start_day_unix = zdt2unix(Int, utc_day_floor(start_dt))
-    end_day_unix = zdt2unix(Int, utc_day_floor(end_dt))
-
-    @timeit to "retr metadata" metadata = get_metadata(collection, dataset, store)
+    storage_format = get_storage_format(meta)
 
     @timeit to "async loop" begin
-        asyncmap(file_keys; ntasks=8) do key
-            file = nothing
+        asyncmap(file_keys; ntasks=_GATHER_ASYNC_NTASKS) do key
+            file_path = nothing
 
             try
-                file = @mock s3_cached_get(store.bucket, key)
+                file_path = @mock s3_cached_get(meta.store.bucket, key)
+
             catch err
                 isa(err, AWSException) && err.code == "NoSuchKey" || throw(err)
                 debug(LOGGER, "S3 object '$key' not found.")
+
             finally
-                if !isnothing(file)
-                    @timeit to "df load" df = DataFrame(CSV.File(file))
+                if !isnothing(file_path)
+                    @timeit to "df load" df = load_df(storage_format, file_path)
 
-                    @timeit to "df xform" begin
-                        # trim the first as last files if they contain extra data
-                        file_date = get_s3_file_timestamp(key)
-                        if file_date == start_day_unix || file_date == end_day_unix
-                            filter!(
-                                :target_start => ts -> ts >= start_unix && ts <= end_unix,
-                                df,
-                            )
-                        end
+                    @timeit to "df filter" filter_df!(df, start, stop, meta; s3_key=key)
 
-                        _process_dataframe!(df, metadata)
+                    @timeit to "df xform" _process_dataframe!(df, meta)
 
-                        dfs[file_date] = df
-                    end
+                    dfs[key] = df
                 end
             end
         end

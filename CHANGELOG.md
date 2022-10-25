@@ -1,5 +1,12 @@
 # Changelog
 
+## Version 1.10.0
+
+### Features
+* Support variable partition sizes and custom columns for `TimeSeriesIndex` [!14](https://gitlab.invenia.ca/invenia/Datafeeds/DataClient.jl/-/merge_requests/14)
+* Updated Type encoding/decoding scheme and support Arrays [!14](https://gitlab.invenia.ca/invenia/Datafeeds/DataClient.jl/-/merge_requests/14)
+
+
 ## Version 1.9.0
 
 ### Features

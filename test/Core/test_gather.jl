@@ -4,13 +4,13 @@ using DataClient:
     FFSMeta,
     MissingDataError,
     S3DB,
-    _find_s3_files,
-    _generate_keys,
+    _filter_missing,
     _load_s3_files,
     _process_dataframe!,
+    get_metadata,
+    gen_s3_file_keys,
     unix2zdt,
-    zdt2unix,
-    get_metadata
+    zdt2unix
 using DataClient.AWSUtils: s3_cached_get
 using DataFrames
 using Dates
@@ -25,31 +25,37 @@ using TimeZones: zdt2unix
     )
     reload_configs(test_config_path)
     STORE = get_backend()["teststore"]
+    COLL, DS = "test-coll", "test-ds"
 
     patched_s3_get = @patch s3_get(bucket::String, key::String) = read(get_test_data(key))
+    patched_s3_cached_get = @patch s3_cached_get(b, k) = get_test_data(k)
+
+    # load test data
+    METADATA = apply(patched_s3_cached_get) do
+        get_metadata(COLL, DS, STORE)
+    end
 
     @testset "test _load_s3_files" begin
-        cached_get = @patch s3_cached_get(bucket, key) = get_test_data(key)
-        apply([patched_s3_get, cached_get]) do
+        apply(patched_s3_cached_get) do
             start_dt = ZonedDateTime(2020, 1, 1, tz"UTC")
             end_dt = ZonedDateTime(2020, 1, 5, tz"UTC")
             # 5 keys will be generated, one for each day
-            file_keys = _generate_keys("test-coll", "test-ds", start_dt, end_dt, STORE)
+            file_keys = gen_s3_file_keys(start_dt, end_dt, METADATA)
             # test the load function
-            df = _load_s3_files(file_keys, "test-coll", "test-ds", start_dt, end_dt, STORE)
+            df = _load_s3_files(file_keys, start_dt, end_dt, METADATA)
             @test !isempty(df)
             # our test data covers the full (hourly) range queried above,
             # show that there are no gaps in the loaded data.
-            loaded = Set(df.target_start)
+            loaded = Set(df[!, METADATA.index.key])
             expected = collect(range(start_dt, end_dt; step=Hour(1)))
             @test isempty(setdiff(expected, loaded))
 
             # test that the filter is working correctly
             start_dt = ZonedDateTime(2020, 1, 2, 15, tz"UTC-4")
             end_dt = ZonedDateTime(2020, 1, 4, 12, tz"UTC+2")
-            file_keys = _generate_keys("test-coll", "test-ds", start_dt, end_dt, STORE)
-            df = _load_s3_files(file_keys, "test-coll", "test-ds", start_dt, end_dt, STORE)
-            loaded = Set(df.target_start)
+            file_keys = gen_s3_file_keys(start_dt, end_dt, METADATA)
+            df = _load_s3_files(file_keys, start_dt, end_dt, METADATA)
+            loaded = Set(df[!, METADATA.index.key])
             expected = collect(range(start_dt, end_dt; step=Hour(1)))
             # show that we're not loading in any unexpected data
             @test isempty(setdiff(loaded, expected))
@@ -59,29 +65,25 @@ using TimeZones: zdt2unix
     @testset "test _load_s3_files errors" begin
         start_dt = ZonedDateTime(2020, 1, 1, tz"UTC")
         end_dt = ZonedDateTime(2020, 1, 9, tz"UTC")
-        file_keys = _generate_keys("test-coll", "test-ds", start_dt, end_dt, STORE)
+
+        file_keys = gen_s3_file_keys(start_dt, end_dt, METADATA)
 
         # Missing S3 Key Error are caught and not thrown
-        cached_get = @patch s3_cached_get(b, k) = get_test_data(k, AwsKeyErr)
-        apply([patched_s3_get, cached_get]) do
-            df = _load_s3_files(file_keys, "test-coll", "test-ds", start_dt, end_dt, STORE)
+        apply(@patch s3_cached_get(b, k) = get_test_data(k, AwsKeyErr)) do
+            df = _load_s3_files(file_keys, start_dt, end_dt, METADATA)
             @test !isempty(df)
         end
 
         # Other Errors are thrown
-        cached_get = @patch s3_cached_get(b, k) = get_test_data(k, AwsOtherErr)
-        apply([patched_s3_get, cached_get]) do
-            @test_throws AwsOtherErr _load_s3_files(
-                file_keys, "test-coll", "test-ds", start_dt, end_dt, STORE
-            )
+        apply(@patch s3_cached_get(b, k) = get_test_data(k, AwsOtherErr)) do
+            @test_throws AwsOtherErr _load_s3_files(file_keys, start_dt, end_dt, METADATA)
         end
 
         # returns an empty DataFrame if no data is found
-        cached_get = @patch s3_cached_get(b, k) = get_test_data(k, AwsKeyErr)
-        apply([patched_s3_get, cached_get]) do
+        apply(@patch s3_cached_get(b, k) = get_test_data(k, AwsKeyErr)) do
             start_dt = ZonedDateTime(2020, 1, 6, tz"UTC")
-            file_keys = _generate_keys("test-coll", "test-ds", start_dt, end_dt, STORE)
-            df = _load_s3_files(file_keys, "test-coll", "test-ds", start_dt, end_dt, STORE)
+            file_keys = gen_s3_file_keys(start_dt, end_dt, METADATA)
+            df = _load_s3_files(file_keys, start_dt, end_dt, METADATA)
             # returns a empty DataFrame if no data is found
             @test typeof(df) == DataFrame
             @test isempty(df)
@@ -111,10 +113,9 @@ using TimeZones: zdt2unix
 
         coll, ds = "datasoup", "ercot_da_gen_ancillary_offers"
         store = S3DB("test-bucket", "test-s3db")
-        metadata =
-            apply(@patch s3_cached_get(bucket::String, key::String) = get_test_data(key)) do
-                get_metadata(coll, ds, store)
-            end
+        metadata = apply(patched_s3_cached_get) do
+            get_metadata(coll, ds, store)
+        end
 
         _process_dataframe!(df, metadata)
         # show that columns are reordered
@@ -171,6 +172,8 @@ using TimeZones: zdt2unix
                 "target_end" => Int64,
             ),
             timezone=tz"America/New_York",
+            index=TimeSeriesIndex("my_key", DAY),
+            storage_format=CSV_GZ,
             last_modified=ZonedDateTime(2022, 1, 1, tz"UTC"),
         )
 
@@ -181,22 +184,17 @@ using TimeZones: zdt2unix
         @test df.release_date == zdt2unix.(Int, zdts)
     end
 
-    @testset "test _find_s3_files" begin
-        patched_s3_list_keys = @patch function s3_list_keys(bucket, prefix)
-            # mock the case where a file exists for every day in the year.
-            year = parse(Int, match(r"year=(\d{4})", prefix)[1])
-            start = ZonedDateTime(year, 1, 1, tz"UTC")
-            stop = ZonedDateTime(year, 12, 31, tz"UTC")
-            return _generate_keys("test-coll", "test-ds", start, stop, STORE)
-        end
+    @testset "test _filter_missing" begin
+        start = ZonedDateTime(2020, 6, 9, tz"UTC")
+        stop = ZonedDateTime(2022, 9, 11, tz"UTC")
+        all_keys = gen_s3_file_keys(start, stop, METADATA)
 
-        apply(patched_s3_list_keys) do
-            start = ZonedDateTime(2020, 6, 9, tz"UTC")
-            stop = ZonedDateTime(2022, 9, 11, tz"UTC")
-            keys = _find_s3_files("test-coll", "test-ds", start, stop, STORE)
-            # show that _find_s3_files() is correctly filtering out out of range files
-            expected = _generate_keys("test-coll", "test-ds", start, stop, STORE)
-            @test isempty(setdiff(Set(keys), Set(expected)))
+        random_indexes = unique(rand(1:length(all_keys), 100))
+        available_keys = getindex(all_keys, random_indexes)
+
+        apply(@patch s3_list_keys(bucket, prefix) = available_keys) do
+            found_keys = _filter_missing(all_keys, METADATA)
+            @test sort(found_keys) == sort(available_keys)
         end
     end
 
@@ -206,51 +204,40 @@ using TimeZones: zdt2unix
         end
 
         COUNTER_FIND = Ref(0)
-        patched_find = @patch function _find_s3_files(coll, ds, start, stop, store)
+        patched_find = @patch function _filter_missing(keys, meta)
             COUNTER_FIND[] += 1
             return Vector{String}()
         end
 
-        COUNTER_GEN = Ref(0)
-        patched_gen = @patch function _generate_keys(coll, ds, start, stop, store)
-            COUNTER_GEN[] += 1
-            return Vector{String}()
-        end
-
-        apply([patched_load, patched_find, patched_gen]) do
+        apply([patched_load, patched_find, patched_s3_cached_get]) do
             # test small range (less than 10 days)
             # `gather` will generate keys directly and skip the 'find' step
             start = ZonedDateTime(2020, 1, 1, tz"UTC")
             stop = ZonedDateTime(2020, 1, 5, tz"UTC")
-            df = gather("test-coll", "test-ds", start, stop)
-            @test COUNTER_GEN[] == 1
+            df = gather(COLL, DS, start, stop)
             @test COUNTER_FIND[] == 0
 
             # test large range (more than 10 days)
-            # `gather` will 'find' instead of generating keys directly
+            # 'find' will be called instead of just generating keys directly
             start = ZonedDateTime(2020, 1, 1, tz"UTC")
             stop = ZonedDateTime(2020, 2, 1, tz"UTC")
-            df = gather("test-coll", "test-ds", start, stop)
-            @test COUNTER_GEN[] == 1
+            df = gather(COLL, DS, start, stop)
             @test COUNTER_FIND[] == 1
 
             # same thing but calling gather while specifying a store_id
-            COUNTER_GEN[] = 0
             COUNTER_FIND[] = 0
             # test small range (less than 10 days)
             # `gather` will generate keys directly and skip the 'find' step
             start = ZonedDateTime(2020, 1, 1, tz"UTC")
             stop = ZonedDateTime(2020, 1, 5, tz"UTC")
-            df = gather("test-coll", "test-ds", start, stop, "teststore")
-            @test COUNTER_GEN[] == 1
+            df = gather(COLL, DS, start, stop, "teststore")
             @test COUNTER_FIND[] == 0
 
             # test large range (more than 10 days)
-            # `gather` will 'find' instead of generating keys directly
+            # 'find' will be called instead of just generating keys directly
             start = ZonedDateTime(2020, 1, 1, tz"UTC")
             stop = ZonedDateTime(2020, 2, 1, tz"UTC")
-            df = gather("test-coll", "test-ds", start, stop, "teststore")
-            @test COUNTER_GEN[] == 1
+            df = gather(COLL, DS, start, stop, "teststore")
             @test COUNTER_FIND[] == 1
         end
 
@@ -259,10 +246,10 @@ using TimeZones: zdt2unix
         end
 
         # test missing data, error is thrown
-        apply([patched_load, patched_find, patched_gen]) do
+        apply([patched_load, patched_find, patched_s3_cached_get]) do
             start = ZonedDateTime(2020, 1, 1, tz"UTC")
             stop = ZonedDateTime(2020, 2, 1, tz"UTC")
-            args = ["test-coll", "test-ds", start, stop]
+            args = [COLL, DS, start, stop]
             @test_throws MissingDataError(args...) gather(args...)
             @test_throws MissingDataError(args...) gather(args..., "teststore")
         end

@@ -7,7 +7,7 @@ using Mocking
 using LRUCache
 
 # The default LRU cache size for the s3_cached_get() function
-const _DEFAULT_CACHE_SIZE_MB = 2000
+const _DEFAULT_CACHE_SIZE_MB = 20000
 
 const LOGGER = getlogger(@__MODULE__)
 
