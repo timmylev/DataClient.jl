@@ -4,7 +4,7 @@ using DataClient.AWSUtils: s3_list_dirs
     test_config_path = abspath(
         joinpath(@__DIR__, "..", "files", "configs", "configs_list.yaml")
     )
-    reload_configs(test_config_path)
+    reload_backend(test_config_path)
 
     px = get_backend()["teststore"].prefix
 

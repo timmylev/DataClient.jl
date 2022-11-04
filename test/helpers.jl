@@ -25,3 +25,13 @@ function get_test_data(s3_key::String, ex=nothing)::String
 
     return path
 end
+
+function ls_R(path::AbstractString)
+    all_files = []
+    for (base, dirs, files) in walkdir(path)
+        for filename in files
+            push!(all_files, joinpath(base, filename))
+        end
+    end
+    return all_files
+end

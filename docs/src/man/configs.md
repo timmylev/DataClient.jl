@@ -8,10 +8,10 @@ This is the default load path the DataClient uses to check for custom configs.
 ## How The File is Loaded
 The config file is loaded in automatically when any of the supported operations are called ([`get_backend`](@ref), [`list_datasets`](@ref), [`gather`](@ref), and [`insert`](@ref)).
 Once loaded in for the first time, it is cached in memory for future use.
-So, making manual changes to the config file will not take immediate effect unless the Julia session is restarted or `reload_configs()` is called.
+So, making manual changes to the config file will not take immediate effect unless the Julia session is restarted or `reload_backend()` is called.
 
 As mentioned above, the default load path of the config file is `joinpath(pwd(), "configs.yaml")`.
-To use a custom path, an explicit [`reload_configs`](@ref) call will be required.
+To use a custom path, an explicit [`reload_backend`](@ref) call will be required.
 
 ## Configurables
 

@@ -9,7 +9,7 @@ using TimeZones: zdt2unix
     test_config_path = abspath(
         joinpath(@__DIR__, "..", "files", "configs", "configs_gather.yaml")
     )
-    reload_configs(test_config_path)
+    reload_backend(test_config_path)
 
     STORE_ID = "teststore"
 

@@ -34,7 +34,7 @@ Refer to [Configs and Backend](@ref) in the manual for more info about config fi
 
 ```@docs
 get_backend
-reload_configs
+reload_backend
 ```
 
 ## Developer API

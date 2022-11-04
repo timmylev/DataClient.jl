@@ -1,71 +1,35 @@
-const CONFIG_PATH = Ref{String}()
 const BACKENDS = Ref{OrderedDict{String,Store}}(OrderedDict())
 
 """
-    reload_configs()
+    reload_backend()
+    reload_backend(path::AbstractString)
 
-Reloads the config file using the latest config file path into memory.
+Reloads the backend configs from the config file.
 
 Refer to [Configs and Backend](@ref) for more info about config files.
 """
-function reload_configs()
+function reload_backend(path::AbstractString)
+    Configs.set_config_path(path)
+    return reload_backend()
+end
+
+function reload_backend()
     empty!(BACKENDS[])
-    get_backend()
-    return nothing
+    Configs.reload_configs()
+    return get_backend()
 end
-
-"""
-    reload_configs(path::String)
-
-Updates the config file path and reloads the config file into memory.
-
-Refer to [Configs and Backend](@ref) for more info about config files
-"""
-function reload_configs(path::String)
-    _set_config_path!(path)
-    reload_configs()
-    return nothing
-end
-
-"""
-    _set_config_path!(path::String)
-
-Updates the config file path.
-"""
-function _set_config_path!(path::String)
-    global CONFIG_PATH[] = path
-    return empty!(BACKENDS[])
-end
-
-"""
-    _get_config_path()
-
-Gets the config file path.
-"""
-_get_config_path() = CONFIG_PATH[]
 
 """
     get_backend()::OrderedDict{String,Store}
+    get_backend(store_id::String)::Store
 
-Gets all registered backend stores and their respective configs.
+Gets available backend store(s).
 
 Refer to [Configs and Backend](@ref) for more info about backend stores.
 """
 function get_backend()::OrderedDict{String,Store}
     if isempty(BACKENDS[])
-        cfg_path = _get_config_path()
-        cfg = if isfile(cfg_path)
-            trace(LOGGER, "Loading config file '$cfg_path'...")
-            try
-                YAML.load_file(_get_config_path())
-            catch err
-                throw(ConfigFileError("Loading config file '$(_get_config_path())' failed."))
-            end
-        else
-            info(LOGGER, "Config file '$cfg_path' is not available, using default stores.")
-            Dict()
-        end
-
+        cfg = Configs.get_configs()
         load_order = if haskey(cfg, "additional-stores")
             stores = [collect(d)[1] for d in cfg["additional-stores"]]
             if get(cfg, "disable-centralized", false)
@@ -103,13 +67,6 @@ function get_backend()::OrderedDict{String,Store}
     return BACKENDS[]
 end
 
-"""
-    get_backend(store_id::String)::Store
-
-Gets the backend store configs of the given store id.
-
-Refer to [Configs and Backend](@ref) for more info about backend stores.
-"""
 function get_backend(store_id::String)::Store
     backend = get_backend()
     return if haskey(backend, store_id)
