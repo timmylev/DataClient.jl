@@ -32,7 +32,8 @@ Write a DataFrame into a `Vector{UInt8}` given a [`StorageFormat`](@ref).
 """
 write_df(fmt::StorageFormat, df::AbstractDataFrame)::Vector{UInt8} = _write_df(Val(fmt), df)
 
-_load_df(::Val{CSV_GZ}, file)::DataFrame = CSV.read(file, DataFrame)
+# CSV@0.10.7 broke multithreaded parsing within asyncmap, restrict to ntasks=1 for now.
+_load_df(::Val{CSV_GZ}, file)::DataFrame = CSV.read(file, DataFrame; ntasks=1)
 
 function _write_df(::Val{CSV_GZ}, df::AbstractDataFrame)::Vector{UInt8}
     stream = IOBuffer()

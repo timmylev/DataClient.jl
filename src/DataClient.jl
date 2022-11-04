@@ -13,11 +13,20 @@ using Memoize
 using Mocking
 using TimeZones
 using TimerOutputs
+using TranscodingStreams
 using WeakRefStrings
 using YAML
 
+include("Configs/Configs.jl")
+include("FileFormats/FileFormats.jl")
+include("AWSUtils/AWSUtils.jl")
+
+using .Configs
+using .FileFormats
+using .AWSUtils
+
 export ConfigFileError, DataFrameError, MissingDataError
-export reload_configs, get_backend
+export reload_backend, get_backend
 export list_datasets, gather, insert
 
 export TimeSeriesIndex, HOUR, DAY, MONTH, YEAR
@@ -60,16 +69,13 @@ function get_tz(coll::AbstractString, ds::AbstractString)::TimeZone
 end
 
 function __init__()
-    _set_config_path!(joinpath(pwd(), "configs.yaml"))
     return Memento.register(LOGGER; force=true)
 end
-
-include("AWSUtils/AWSUtils.jl")
 
 include("exceptions.jl")
 include("common.jl")
 include("formats.jl")
-include("configs.jl")
+include("backends.jl")
 include("s3store.jl")
 include("list.jl")
 include("gather.jl")

@@ -20,7 +20,10 @@ Gathers data from a target dataset as a `DataFrame`.
 - `dataset`: The name of the dataset
 - `start_dt`: The start bound (inclusive) of the `Index` column .
 - `end_dt`: The end bound (inclusive) for the `Index` column.
-- `store_id`: (Optional) The backend store id.
+- `store_id`: (Optional) The backend store id. It is recommended to specify a `store_id`
+    for efficiency reasons. If none is provided, each available store will be iteratively
+    checked in order of precedence until the first store containing the target dataset
+    is found. Refer to [Configs and Backend](@ref) for more info about store precedence.
 
 !!! note "IMPORTANT"
     The `start_dt` and `end_dt` filters are only applied to the `Index` column of the
@@ -28,11 +31,38 @@ Gathers data from a target dataset as a `DataFrame`.
     `FFS`(@ref) datasets, it will depend on which column was set as the index when the
     dataset was first created. Any "target_end" column (if available) is irrelevant.
 
-!!! note
-    It is recommended to specify a `store_id` for efficiency reasons. If none is provided,
-    each available store will be iteratively checked in order of precedence until the first
-    store containing the target dataset is found. Refer to [Configs and Backend](@ref) for
-    more info about store precedence.
+## Cache Configs
+When retrieving data from a sub-type of `S3Store`, a file cache is automatically
+instantiated for each Julia session to cache downloaded S3 files. By default, this cache
+is ephemeral and will be deleted at the end of the session. Also by default, downloaded
+S3 files that are compressed will be decompressed before caching, though this is only
+suported for a limited number of compression types. The following config file setting
+([Configs and Backend](@ref)) and/or environment variables can be supplied to modify the
+default cache behaviour. Refer to [`AWSUtils.s3_cached_get`](@ref) and
+[`AWSUtils.FileCache`](@ref) for more details:
+- `DATACLIENT_CACHE_DIR` (`String`): The absolute path to a custom directory to be used
+    as the cache. Files cached here will be persistent, i.e. not removed at the end of
+    the session.
+- `DATACLIENT_CACHE_SIZE_MB` (`Int`): The max cache size in MB before files are
+    de-registered/removed from the LRU during the session in real-time.
+- `DATACLIENT_CACHE_EXPIRE_AFTER_DAYS` (`Int`): This is only relevant when initializing
+    the cache at the start of the session if a custom cache dir is specified. Files in
+    the cache dir that is older than this period will be removed during initialisation.
+    The default is 90 days.
+- `DATACLIENT_CACHE_DECOMPRESS` (`Bool`): Whether or not to decompress S3 files before
+    caching.
+
+!!! note "WARNING: Multi-process Shared Cache"
+    The [`AWSUtils.FileCache`](@ref) (LRU-based) is thread-safe, but not multi-process safe.
+    When sharing the same (custom) cache directory across multiple processes, there may
+    be cases where one proccess starts removing file(s) from the cache dir due to it
+    hitting the max cache size limit. This is a problem for the other processes because
+    the removed file(s) are still registered in their cache registries even though the
+    underlying files no longer exists. To reduce the likelyhood of this happening, set
+    the max cache size limit to a high number such that file removals do not happen.
+    Alternatively, do not use a custom cache dir for multi-process use cases and stick
+    with the default ephemeral cache instead, which creates a separate cache dir for
+    each process.
 """
 function gather(
     collection::AbstractString,
@@ -150,13 +180,16 @@ function _load_s3_files(
     dfs = Dict{String,DataFrame}()
 
     storage_format = get_storage_format(meta)
+    to_decompress = get(Configs.get_configs(), "DATACLIENT_CACHE_DECOMPRESS", true)
 
     @timeit to "async loop" begin
         asyncmap(file_keys; ntasks=_GATHER_ASYNC_NTASKS) do key
             file_path = nothing
 
             try
-                file_path = @mock s3_cached_get(meta.store.bucket, key)
+                file_path = @mock s3_cached_get(
+                    meta.store.bucket, key; decompress=to_decompress
+                )
 
             catch err
                 isa(err, AWSException) && err.code == "NoSuchKey" || throw(err)

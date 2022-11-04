@@ -1,37 +1,39 @@
-using AWSS3: s3_get_file
+using AWSS3: s3_get
 using DataClient.AWSUtils: FileCache, s3_cached_get, s3_list_dirs
 using DataClient.AWSUtils.S3: list_objects_v2
+using DataClient.Configs: reload_configs
+using TranscodingStreams: transcode
 
 @testset "test src/AWSUtils/s3_cached_get.jl" begin
+    cfg_path = joinpath(pwd(), "configs.yaml")
+    reload_configs(cfg_path)
+
     FILE_SIZE_MB = 2
     CALL_COUNTER = Ref(0)
-
-    patched_s3_get_file = @patch function s3_get_file(
-        s3_bucket, s3_key, file_path; kwargs...
-    )
+    patched_s3_get = @patch function s3_get(s3_bucket, s3_key; kwargs...)
         CALL_COUNTER[] += 1
-        stream = IOBuffer(zeros(UInt8, FILE_SIZE_MB * 1000000))
-        open(file_path, "w") do file
-            while !eof(stream)
-                write(file, readavailable(stream))
-            end
-        end
-        return nothing
+        return zeros(UInt8, FILE_SIZE_MB * 1000000)
+    end
+
+    TRANSCODED_COUNT = Ref(0)
+    patched_transcode = @patch function transcode(codec, data)
+        TRANSCODED_COUNT[] += 1
+        return data
     end
 
     @testset "test using default cache" begin
-        apply(patched_s3_get_file) do
+        apply(patched_s3_get) do
             CALL_COUNTER[] = 0
-            # downloading 'file_1.txt' for the first time, s3_get_file() is called
+            # downloading 'file_1.txt' for the first time, s3_get() is called
             stream = s3_cached_get("test-bucket-1", "file_1.txt")
             @test CALL_COUNTER[] == 1
-            # 'file_1.txt' is cached, s3_get_file() is not called
+            # 'file_1.txt' is cached, s3_get() is not called
             stream = s3_cached_get("test-bucket-1", "file_1.txt")
             @test CALL_COUNTER[] == 1
-            # downloading 'file_2.txt' for the first time, s3_get_file() is called
+            # downloading 'file_2.txt' for the first time, s3_get() is called
             stream = s3_cached_get("test-bucket-1", "file_2.txt")
             @test CALL_COUNTER[] == 2
-            # downloading 'file_1.txt' from a different bucket, s3_get_file() is called
+            # downloading 'file_1.txt' from a different bucket, s3_get() is called
             stream = s3_cached_get("test-bucket-2", "file_1.txt")
             @test CALL_COUNTER[] == 3
         end
@@ -41,7 +43,7 @@ using DataClient.AWSUtils.S3: list_objects_v2
         # The cache will hold 3 files max
         cache = FileCache(FILE_SIZE_MB * 3)
 
-        apply(patched_s3_get_file) do
+        apply(patched_s3_get) do
             CALL_COUNTER[] = 0
             # download and cache 'file_1.txt'
             stream = s3_cached_get("test-bucket", "file_1.txt", cache)
@@ -83,6 +85,72 @@ using DataClient.AWSUtils.S3: list_objects_v2
             # getting 'file_1.txt' results in a re-download
             stream = s3_cached_get("test-bucket", "file_1.txt", cache)
             @test CALL_COUNTER[] == 5
+        end
+    end
+
+    @testset "test instantiate persistent cache" begin
+        apply(patched_s3_get) do
+            # Unset the global cache
+            DataClient.AWSUtils.unset_global_cache()
+            @test DataClient.AWSUtils._DEFAULT_CACHE[] == nothing
+
+            # set the ENV and reload configs
+            cache_dir = mktempdir()
+            withenv(
+                "DATACLIENT_CACHE_DIR" => cache_dir,
+                "DATACLIENT_CACHE_SIZE_MB" => "200",
+                "DATACLIENT_CACHE_EXPIRE_AFTER_DAYS" => "5",
+            ) do
+                @test length(ls_R(cache_dir)) == 0  # new dir is empty
+                reload_configs(cfg_path)
+
+                # files will now be cached
+                stream = s3_cached_get("test-bucket-1", "file_1.txt")
+                @test length(ls_R(cache_dir)) == 1
+
+                # When the cache is reinstantiated, the previously cached files will persist
+                DataClient.AWSUtils.unset_global_cache()
+                stream = s3_cached_get("test-bucket-1", "file_2.txt")
+                @test length(ls_R(cache_dir)) == 2  # incremented
+
+                # test that cache removes stale files by speeding up time by 10 days
+                curr_time = now()
+                apply([patched_s3_get, @patch now() = curr_time + Day(10)]) do
+                    # Now reset the cache, remember that we've set the cache config with
+                    # a 5-day expiry previously
+                    DataClient.AWSUtils.unset_global_cache()
+                    stream = s3_cached_get("test-bucket-1", "file_4.txt")
+                    @test length(ls_R(cache_dir)) == 1  # resets to 1
+                end
+            end
+        end
+    end
+
+    @testset "test decompress cached files" begin
+        apply([patched_s3_get, patched_transcode]) do
+            # non-compressed file (based on extension)
+            cached_path = s3_cached_get("test-bucket-2", "file_1.csv")
+            @test TRANSCODED_COUNT[] == 0
+
+            # compressed file (based on extension)
+            cached_path = s3_cached_get("test-bucket-2", "file_2.csv.gz")
+            @test TRANSCODED_COUNT[] == 1
+            @test endswith(cached_path, ".csv")
+
+            cached_path = s3_cached_get("test-bucket-2", "file_3.arrow.GZ")
+            @test TRANSCODED_COUNT[] == 2
+            @test endswith(cached_path, ".arrow")
+
+            cached_path = s3_cached_get("test-bucket-2", "file_4.arrow.ZST")
+            @test TRANSCODED_COUNT[] == 3
+            @test endswith(cached_path, ".arrow")
+
+            # disable decompression
+            cached_path = s3_cached_get(
+                "test-bucket-2", "file_5.arrow.ZST"; decompress=false
+            )
+            @test TRANSCODED_COUNT[] == 3
+            @test endswith(cached_path, ".arrow.ZST")
         end
     end
 end

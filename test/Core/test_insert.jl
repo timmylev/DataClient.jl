@@ -380,7 +380,7 @@ using TimeZones
 
             expected = Dict(gen_s3_file_key(p[1], test_metadata) => p for p in parts)
 
-            reload_configs(
+            reload_backend(
                 joinpath(@__DIR__, "..", "files", "configs", "configs_valid.yaml")
             )
             insert("test-coll", "test-ds", input_df, "myffs")

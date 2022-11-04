@@ -1,5 +1,10 @@
 # Changelog
 
+## Version 1.11.0
+
+### Features
+* Upgrade Cache to support file decompression and persistent directories [!15](https://gitlab.invenia.ca/invenia/Datafeeds/DataClient.jl/-/merge_requests/15)
+
 ## Version 1.10.0
 
 ### Features

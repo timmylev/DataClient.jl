@@ -23,12 +23,12 @@ using TimeZones: zdt2unix
     test_config_path = abspath(
         joinpath(@__DIR__, "..", "files", "configs", "configs_gather.yaml")
     )
-    reload_configs(test_config_path)
+    reload_backend(test_config_path)
     STORE = get_backend()["teststore"]
     COLL, DS = "test-coll", "test-ds"
 
     patched_s3_get = @patch s3_get(bucket::String, key::String) = read(get_test_data(key))
-    patched_s3_cached_get = @patch s3_cached_get(b, k) = get_test_data(k)
+    patched_s3_cached_get = @patch s3_cached_get(b, k; kwargs...) = get_test_data(k)
 
     # load test data
     METADATA = apply(patched_s3_cached_get) do
@@ -69,18 +69,18 @@ using TimeZones: zdt2unix
         file_keys = gen_s3_file_keys(start_dt, end_dt, METADATA)
 
         # Missing S3 Key Error are caught and not thrown
-        apply(@patch s3_cached_get(b, k) = get_test_data(k, AwsKeyErr)) do
+        apply(@patch s3_cached_get(b, k; kwargs...) = get_test_data(k, AwsKeyErr)) do
             df = _load_s3_files(file_keys, start_dt, end_dt, METADATA)
             @test !isempty(df)
         end
 
         # Other Errors are thrown
-        apply(@patch s3_cached_get(b, k) = get_test_data(k, AwsOtherErr)) do
+        apply(@patch s3_cached_get(b, k; kwargs...) = get_test_data(k, AwsOtherErr)) do
             @test_throws AwsOtherErr _load_s3_files(file_keys, start_dt, end_dt, METADATA)
         end
 
         # returns an empty DataFrame if no data is found
-        apply(@patch s3_cached_get(b, k) = get_test_data(k, AwsKeyErr)) do
+        apply(@patch s3_cached_get(b, k; kwargs...) = get_test_data(k, AwsKeyErr)) do
             start_dt = ZonedDateTime(2020, 1, 6, tz"UTC")
             file_keys = gen_s3_file_keys(start_dt, end_dt, METADATA)
             df = _load_s3_files(file_keys, start_dt, end_dt, METADATA)
