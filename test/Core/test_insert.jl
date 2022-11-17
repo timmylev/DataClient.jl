@@ -19,7 +19,8 @@ using TimeZones
 @testset "test src/insert.jl" begin
     key = "target_start"
     index = TimeSeriesIndex(key, DAY)
-    fmt = CSV_GZ
+    fmt = FileFormats.CSV
+    compression = FileFormats.GZ
     dummy_ffs = FFS("bucket", "prefix")
 
     @testset "test _validate_dataframe" begin
@@ -74,7 +75,8 @@ using TimeZones
                 column_types=column_types,
                 timezone=tz,
                 index=index,
-                storage_format=fmt,
+                file_format=fmt,
+                compression=compression,
                 last_modified=freezed_now,
                 details=details,
             )
@@ -98,7 +100,15 @@ using TimeZones
                             DC_LOGGER,
                             "debug",
                             "Metadata for '$coll-$ds' does not exist, creating metadata...",
-                            _ensure_created(coll, ds, test_df, index, fmt, dummy_ffs),
+                            _ensure_created(
+                                coll,
+                                ds,
+                                test_df,
+                                index,
+                                fmt,
+                                dummy_ffs;
+                                compression=compression,
+                            ),
                         )
                     end
 
@@ -112,7 +122,14 @@ using TimeZones
                     custom = Dict("val_a" => Int64, "val_b" => Union{Missing,String})
                     col_types::ColumnTypes = merge(column_types, custom)
                     evaluated = _ensure_created(
-                        coll, ds, test_df, index, fmt, dummy_ffs; column_types=col_types
+                        coll,
+                        ds,
+                        test_df,
+                        index,
+                        fmt,
+                        dummy_ffs;
+                        compression=compression,
+                        column_types=col_types,
                     )
 
                     expected = gen_metadata(; column_types=col_types)
@@ -129,7 +146,14 @@ using TimeZones
                         "The column '$col' in the user-defined `column_types` " *
                             "is not present in the input DataFrame, ignoring it...",
                         _ensure_created(
-                            coll, ds, test_df, index, fmt, dummy_ffs; column_types=col_types
+                            coll,
+                            ds,
+                            test_df,
+                            index,
+                            fmt,
+                            dummy_ffs;
+                            compression=compression,
+                            column_types=col_types,
                         ),
                     )
 
@@ -146,7 +170,14 @@ using TimeZones
                         "The input DataFrame column 'val_a' has type 'Int64' which is" *
                         " incompatible with the user-defined type of 'String'",
                     ) _ensure_created(
-                        coll, ds, test_df, index, fmt, dummy_ffs; column_types=col_types
+                        coll,
+                        ds,
+                        test_df,
+                        index,
+                        fmt,
+                        dummy_ffs;
+                        compression=compression,
+                        column_types=col_types,
                     )
                 end
             end
@@ -160,7 +191,9 @@ using TimeZones
             apply([patched_get, patched_write, patched_now]) do
                 @test_throws DataFrameError(
                     "Missing required columns [\"new_column\"] for dataset '$coll-$ds'."
-                ) _ensure_created(coll, ds, test_df, index, fmt, dummy_ffs)
+                ) _ensure_created(
+                    coll, ds, test_df, index, fmt, dummy_ffs; compression=compression
+                )
             end
         end
 
@@ -175,7 +208,9 @@ using TimeZones
                     "warn",
                     "Extra columns [\"val_b\"] found in the input DataFrame for " *
                         "dataset '$coll-$ds' will be ignored.",
-                    _ensure_created(coll, ds, test_df, index, fmt, dummy_ffs),
+                    _ensure_created(
+                        coll, ds, test_df, index, fmt, dummy_ffs; compression=compression
+                    ),
                 )
             end
         end
@@ -190,13 +225,17 @@ using TimeZones
                 @test_throws DataFrameError(
                     "The input DataFrame column 'val_a' has type 'ZonedDateTime' " *
                     "which is incompatible with the stored type of 'Integer'",
-                ) _ensure_created(coll, ds, df, index, fmt, dummy_ffs)
+                ) _ensure_created(
+                    coll, ds, df, index, fmt, dummy_ffs; compression=compression
+                )
 
                 # test using a DF with different but still compatible column types
                 df = copy(test_df)
                 df.val_a = convert.(UInt8, df[!, :val_a])
                 # no error is thrown
-                _ensure_created(coll, ds, df, index, fmt, dummy_ffs)
+                _ensure_created(
+                    coll, ds, df, index, fmt, dummy_ffs; compression=compression
+                )
             end
         end
 
@@ -215,7 +254,16 @@ using TimeZones
                 to_update = Dict("k2" => "new", "k3" => "new")
                 expected = Dict("k1" => "old", "k2" => "new", "k3" => "new")
 
-                _ensure_created(coll, ds, test_df, index, fmt, dummy_ffs; details=to_update)
+                _ensure_created(
+                    coll,
+                    ds,
+                    test_df,
+                    index,
+                    fmt,
+                    dummy_ffs;
+                    compression=compression,
+                    details=to_update,
+                )
 
                 @test CALLED_WITH["metadata"].details == expected
             end
@@ -248,7 +296,8 @@ using TimeZones
             ),
             timezone=tz,
             index=index,
-            storage_format=fmt,
+            file_format=fmt,
+            compression=compression,
             last_modified=ZonedDateTime(2022, 1, 1, tz"UTC"),
         )
 
@@ -338,7 +387,8 @@ using TimeZones
             column_types=Dict("target_start" => ZonedDateTime),
             timezone=tz"UTC",
             index=index,
-            storage_format=fmt,
+            file_format=fmt,
+            compression=compression,
             last_modified=ZonedDateTime(2022, 1, 1, tz"UTC"),
         )
 

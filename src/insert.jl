@@ -12,15 +12,19 @@ const _INSERT_ASYNC_NTASKS = 8
         details::Union{Nothing,Dict{String,String}}=nothing,
         column_types::Union{Nothing,Dict}=nothing,
         index::Union{Nothing,Index}=nothing,
-        storage_format::Union{Nothing,StorageFormat}=nothing,
+        file_format::Union{Nothing,FileFormat}=nothing,
+        compression::Union{Nothing,Compression}=nothing,
     )
 
 Inserts a `DataFrame` into a new or existing dataset in the specified store. The insert
 operation is only supported for [`FFS`](@ref)-type stores.
 
+The keyword arguments `column_types`, `index`, `file_format`, and `compression` are only
+relevant when inserting data into a new dataset, they will be ignored otherwise.
+
 If inserting data into an existing dataset, the input `DataFrame` will be merged and
 deduplicated with any pre-existing data within the dataset. The process will fail if the
-input `DataFrame` has incompatible column types.
+input `DataFrame` has incompatible columns or types.
 
 # Arguments
 - `collection`: The name of the dataset's collection
@@ -42,14 +46,16 @@ input `DataFrame` has incompatible column types.
     type, or, allow missing values (using Union{Missing,T}). This keyword supports just
     that by overwriting the default generated type for the column. Attempting to modify
     the type map of an existing dataset is not supported and will result in an error.
+- `index`: The type of index to use. Defaults to `TimeSeriesIndex("target_start", DAY)`.
+- `file_format`: File format to use for the dataset. Defaults to `FileFormats.ARROW`.
+- `compression`: File compression to use for the dataset. Defaults to `FileFormats.ZST`.
 
 !!! note "Dataset Indexing"
     When creating a new dataset, one of the input `DataFrame` columns must be available
     to be used as the dataset's index, i.e. the column that the [`gather`](@ref) query
     uses to filter for data. The index can only be configured when creating a new dataset
     and it is done so with the `index` kwarg. Currently, only the [`TimeSeriesIndex`](@ref)
-    is supported, where the selected column must a of type `ZonedDateTime`. If none is
-    configured, the default index used will be `TimeSeriesIndex("target_start", DAY)`.
+    is supported, where the selected column must a of type `ZonedDateTime`.
 
 ## Example for Specifying Column Types
 ```julia
@@ -98,7 +104,8 @@ function insert(
     details::Union{Nothing,Dict{String,String}}=nothing,
     column_types::Union{Nothing,Dict}=nothing,
     index::Union{Nothing,Index}=nothing,
-    storage_format::Union{Nothing,StorageFormat}=nothing,
+    file_format::Union{Nothing,FileFormat}=nothing,
+    compression::Union{Nothing,Compression}=nothing,
 )
     if isempty(dataframe)
         throw(DataFrameError("Dataframe must not be empty."))
@@ -115,7 +122,8 @@ function insert(
         details=details,
         column_types=c_types,
         index=index,
-        storage_format=storage_format,
+        file_format=file_format,
+        compression=compression,
     )
 end
 
@@ -127,7 +135,8 @@ function _insert(
     details::Union{Nothing,Dict{String,String}}=nothing,
     column_types::Union{Nothing,ColumnTypes}=nothing,
     index::Union{Nothing,Index}=nothing,
-    storage_format::Union{Nothing,StorageFormat}=nothing,
+    file_format::Union{Nothing,FileFormat}=nothing,
+    compression::Union{Nothing,Compression}=nothing,
 )
     # Using a global timer because we're also timing stuff in external called functions.
     reset_timer!(to)
@@ -137,8 +146,9 @@ function _insert(
         dataset,
         dataframe,
         isnothing(index) ? TimeSeriesIndex("target_start", DAY) : index,
-        isnothing(storage_format) ? CSV_GZ : storage_format,
+        isnothing(file_format) ? FileFormats.ARROW : file_format,
         store;
+        compression=isnothing(compression) ? FileFormats.ZST : compression,
         details=details,
         column_types=column_types,
     )
@@ -189,12 +199,13 @@ function _merge(dataframe::AbstractDataFrame, s3key::AbstractString, metadata::F
     end
 
     bucket = metadata.store.bucket
-    storage_format = get_storage_format(metadata)
+    file_format = get_file_format(metadata)
+    file_compression = get_file_compression(metadata)
 
     # check if there is existing data in S3
     existing = try
         obj = @mock s3_get(bucket, s3key; retry=false)
-        @timeit to "load_existing" existing = load_df(storage_format, obj)
+        @timeit to "load_existing" existing = load_df(obj, file_format, file_compression)
     catch err
         isa(err, AWSException) && err.code == "NoSuchKey" || throw(err)
         DataFrame()
@@ -211,7 +222,7 @@ function _merge(dataframe::AbstractDataFrame, s3key::AbstractString, metadata::F
         "total rows for '$s3key'.",
     )
 
-    @timeit to "to_csv_gz" data = write_df(storage_format, merged)
+    @timeit to "write_df" data = write_df(merged, file_format, file_compression)
     @mock s3_put(bucket, s3key, data)
 
     return nothing
@@ -223,8 +234,9 @@ end
         dataset::AbstractString,
         dataframe::DataFrame,
         index::Index,
-        storage_format::StorageFormat,
+        file_format::FileFormat,
         store::FFS;
+        compression::Union{Nothing,Compression}=FileFormats.ZST,
         details::Union{Nothing,Dict{String,String}}=nothing,
         column_types::Union{Nothing,ColumnTypes}=nothing,
     )::FFSMeta
@@ -238,8 +250,9 @@ function _ensure_created(
     dataset::AbstractString,
     dataframe::DataFrame,
     index::Index,
-    storage_format::StorageFormat,
+    file_format::FileFormat,
     store::FFS;
+    compression::Union{Nothing,Compression}=nothing,
     details::Union{Nothing,Dict{String,String}}=nothing,
     column_types::Union{Nothing,ColumnTypes}=nothing,
 )::FFSMeta
@@ -275,7 +288,8 @@ function _ensure_created(
                 column_types=metadata.column_types,
                 timezone=metadata.timezone,
                 index=metadata.index,
-                storage_format=metadata.storage_format,
+                file_format=metadata.file_format,
+                compression=metadata.compression,
                 last_modified=now(tz"UTC"),  # update
                 details=updated_details,  # update
             )
@@ -315,7 +329,8 @@ function _ensure_created(
             column_types=col_types,
             timezone=df_tz,
             index=index,
-            storage_format=storage_format,
+            file_format=file_format,
+            compression=compression,
             last_modified=now(tz"UTC"),
             details=details,
         )

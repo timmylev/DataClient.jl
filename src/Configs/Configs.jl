@@ -39,7 +39,7 @@ function reload_configs()
 
     if isfile(cfg_path)
         CONFIGS[] = YAML.load_file(cfg_path)
-        debug(LOGGER, "Loaded configs $(CONFIGS[]) from file '$cfg_path'.")
+        trace(LOGGER, "Loaded configs $(CONFIGS[]) from file '$cfg_path'.")
     else
         trace(LOGGER, "Config file '$cfg_path' is not available, resetting configs.")
         CONFIGS[] = Dict()

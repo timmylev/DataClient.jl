@@ -1,5 +1,10 @@
 # Changelog
 
+## Version 1.12.0
+
+### Features
+* Support for Arrow files and DataFrame metadata [!16](https://gitlab.invenia.ca/invenia/Datafeeds/DataClient.jl/-/merge_requests/16)
+
 ## Version 1.11.0
 
 ### Features

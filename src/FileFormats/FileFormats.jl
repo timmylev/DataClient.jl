@@ -9,11 +9,28 @@ using TranscodingStreams
 export COMPRESSION_CODEC, DECOMPRESSION_CODEC
 export Compression, FileFormat
 
+"""
+    Compression
+
+Support compressions:
+- BZ2
+- GZ
+- LZ4
+- ZST
+"""
 @enum Compression BZ2 GZ LZ4 ZST
 # A lookup dict to convert a string back into an enum
 const _COMPRESSION = Dict(string.(instances(Compression)) .=> instances(Compression))
 Compression(str::AbstractString)::Compression = _COMPRESSION[str]
 
+"""
+    FileFormat
+
+Support file formats:
+- ARROW
+- CSV
+- PARQUET
+"""
 @enum FileFormat ARROW CSV PARQUET
 # A lookup dict to convert a string back into an enum
 const _FILE_FORMAT = Dict(string.(instances(FileFormat)) .=> instances(FileFormat))

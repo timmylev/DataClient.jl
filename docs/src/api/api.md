@@ -62,7 +62,8 @@ DataClient.PartitionSize
 
 ## Storage Format
 ```@docs
-DataClient.StorageFormat
+DataClient.FileFormats.FileFormat
+DataClient.FileFormats.Compression
 DataClient.load_df
 DataClient.write_df
 ```
@@ -88,7 +89,8 @@ DataClient.decode_type
 DataClient.encode_type
 DataClient.sanitize_type
 DataClient.get_index
-DataClient.get_storage_format
+DataClient.get_file_format
+DataClient.get_file_compression
 ```
 
 ### Utility Functions and types

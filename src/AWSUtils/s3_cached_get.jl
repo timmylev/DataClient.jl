@@ -158,7 +158,7 @@ function s3_cached_get(
     cached_path = joinpath(cache.dir, s3_bucket, cached_suffix)
 
     get!(cache.dict, cached_path) do
-        debug(LOGGER, "Downloading S3 file 's3://$s3_bucket/$s3_key'...")
+        trace(LOGGER, "Downloading S3 file 's3://$s3_bucket/$s3_key'...")
         data = @mock s3_get(s3_bucket, s3_key; retry=false)
 
         if !isnothing(codec)

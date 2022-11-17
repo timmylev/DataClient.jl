@@ -167,3 +167,30 @@ end
 function s_fmt(s::Union{Integer,AbstractFloat})::Dates.CompoundPeriod
     return canonicalize(Millisecond(trunc(Int, s * 1000)))
 end
+
+# used to pretty print nested dicts
+function format_dict(d::Dict; offset::Int=1)
+    lines = _fmt_dict(d, 0)
+    padding = join(fill(" ", offset))
+    lines = [padding * l for l in lines]
+    return join(lines, "\n")
+end
+
+# Depth-first recursion through the Dict
+function _fmt_dict(d::Dict, pre::Int)
+    lines = []
+    max_key_len = max(map(length, map(repr, collect(keys(d))))...)
+    padding = join(fill(" ", pre))
+    key_format = "$padding{1:$(max_key_len)s} => "
+    for (k, v) in d
+        line = Format.format(key_format, repr(k))
+        if typeof(v) <: Dict  # recurse case
+            push!(lines, line)
+            append!(lines, _fmt_dict(v, pre + 2))
+        else  # base case
+            line *= repr(v)
+            push!(lines, line)
+        end
+    end
+    return lines
+end
