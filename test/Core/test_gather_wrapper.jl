@@ -59,7 +59,8 @@ using TimeZones: zdt2unix
             ),
             timezone=TZ,
             index=TimeSeriesIndex("target_start", DAY),
-            storage_format=CSV_GZ,
+            file_format=FileFormats.CSV,
+            compression=FileFormats.GZ,
             last_modified=ZonedDateTime(2022, 1, 1, tz"UTC"),
         )
     end

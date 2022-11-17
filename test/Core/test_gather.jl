@@ -173,7 +173,8 @@ using TimeZones: zdt2unix
             ),
             timezone=tz"America/New_York",
             index=TimeSeriesIndex("my_key", DAY),
-            storage_format=CSV_GZ,
+            file_format=FileFormats.CSV,
+            compression=FileFormats.GZ,
             last_modified=ZonedDateTime(2022, 1, 1, tz"UTC"),
         )
 
@@ -239,6 +240,11 @@ using TimeZones: zdt2unix
             stop = ZonedDateTime(2020, 2, 1, tz"UTC")
             df = gather(COLL, DS, start, stop, "teststore")
             @test COUNTER_FIND[] == 1
+
+            # check that the expected metadata is associsted with the returned DF
+            @test collect(metadatakeys(df)) == ["metadata"]
+            expected = DataClient.get_metadata(COLL, DS, get_backend("teststore"))
+            @test repr(metadata(df, "metadata")) == repr(expected)  # also tests show()
         end
 
         patched_load = @patch function _load_s3_files(args...)

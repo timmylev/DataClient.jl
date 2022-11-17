@@ -112,19 +112,22 @@ function _gather(
 
     keys = gen_s3_file_keys(start, stop, meta)
     nkeys = length(keys)
-    debug(LOGGER, "Generated $nkeys file keys for $ds_name")
+    trace(LOGGER, "Generated $nkeys file keys for $ds_name")
 
     # If grabbing many files, do a s3-list first to filter out missing files.
     if length(keys) > _GATHER_ASYNC_NTASKS
         t1 = @elapsed keys = @mock _filter_missing(keys, meta)
         nkeys = length(keys)
         rtime = "($(s_fmt(t1)))"
-        debug(LOGGER, "Listing $nkeys file keys from $ds_name took $rtime")
+        trace(LOGGER, "Listing $nkeys file keys from $ds_name took $rtime")
     end
 
     t2 = @elapsed results = @mock _load_s3_files(keys, start, stop, meta)
     rtime = "($(s_fmt(t2)))"
-    debug(LOGGER, "Loading and merging $nkeys files from $ds_name took $rtime")
+    debug(LOGGER, "Loading $nkeys files from $ds_name took $rtime")
+
+    # Attach metadata to the dataframe, see `DataFrame.metadata!`
+    metadata!(results, "metadata", meta; style=:note)
 
     return results
 end
@@ -179,7 +182,7 @@ function _load_s3_files(
     to = TimerOutput()
     dfs = Dict{String,DataFrame}()
 
-    storage_format = get_storage_format(meta)
+    file_format = get_file_format(meta)
     to_decompress = get(Configs.get_configs(), "DATACLIENT_CACHE_DECOMPRESS", true)
 
     @timeit to "async loop" begin
@@ -197,7 +200,10 @@ function _load_s3_files(
 
             finally
                 if !isnothing(file_path)
-                    @timeit to "df load" df = load_df(storage_format, file_path)
+                    # the file may have been decompressed beforehand by s3_cached_get
+                    _, compression = FileFormats.detect_format(file_path)
+
+                    @timeit to "df load" df = load_df(file_path, file_format, compression)
 
                     @timeit to "df filter" filter_df!(df, start, stop, meta; s3_key=key)
 

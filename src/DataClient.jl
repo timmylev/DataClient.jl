@@ -1,5 +1,6 @@
 module DataClient
 
+using Arrow
 using AWS
 using AWSS3
 using CSV
@@ -7,6 +8,7 @@ using DataFrames
 using DataStructures
 using Dates
 using Exceptions
+using Format
 using JSON
 using Memento
 using Memoize
@@ -30,15 +32,17 @@ export reload_backend, get_backend
 export list_datasets, gather, insert
 
 export TimeSeriesIndex, HOUR, DAY, MONTH, YEAR
-export CSV_GZ
+export FileFormats
 
 const LOGGER = getlogger(@__MODULE__)
 
 # register/hardcode any centralized stores here
 const CENTRALIZED_STORES = OrderedDict{String,String}(
     "datafeeds" => "s3db:s3://invenia-datafeeds-output/version5/aurora/gz/",
-    "public-data" => "ffs:s3://invenia-private-datasets/DataClient/FFS/CSV_GZ/",
-    "miso-nda" => "ffs:s3://invenia-miso-nda-5twngkbmrczu6xd9uppda18b5995yuse1a-s3alias/derived_works/DataClient/FFS/CSV_GZ/",
+    "datafeeds-arrow" => "ffs:s3://invenia-datafeeds-output/version5/arrow/zst/",
+    "public-data" => "ffs:s3://invenia-private-datasets/DataClient/ffs/arrow/zst/",
+    "ercot-nda" => "ffs:s3://invenia-ercot-nda-mw6ez7cwz9gtdqw1qejn81bfkdwdouse1a-s3alias/derived_works/DataClient/ffs/arrow/zst/",
+    "miso-nda" => "ffs:s3://invenia-miso-nda-5twngkbmrczu6xd9uppda18b5995yuse1a-s3alias/derived_works/DataClient/ffs/arrow/zst/",
 )
 # https://gitlab.invenia.ca/invenia/TabularDataSchema/-/blob/master/versions/2017-05-02_001.md
 const BOUNDS = Dict{Int,String3}(0 => "()", 1 => "[)", 2 => "(]", 3 => "[]")

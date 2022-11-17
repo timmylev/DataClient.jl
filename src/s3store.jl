@@ -151,9 +151,37 @@ Base.@kwdef struct FFSMeta <: S3Meta
     column_types::ColumnTypes
     timezone::TimeZone
     index::Index
-    storage_format::StorageFormat
+    file_format::FileFormat
+    compression::Union{Compression,Nothing}
     last_modified::ZonedDateTime
     details::Union{Nothing,Dict{String,String}} = nothing
+end
+
+Base.show(io::IO, ::MIME"text/plain", item::S3Meta) = Base.show(io, item)
+
+# purely for aesthetic purposes
+function Base.show(io::IO, item::S3Meta)
+    lines = ["$(item.collection)-$(item.dataset)"]  # first line to print
+    attrs = setdiff(propertynames(item), (:collection, :dataset))
+    max_len = max(map(length, map(string, attrs))...)
+    ending = []
+
+    for p in attrs
+        val = getfield(item, p)
+        if isa(val, Dict)
+            push!(ending, p)  # skip dicts for now, wait till end
+        else
+            push!(lines, Format.format("  {:$(max_len)s} : {:s}", p, val))
+        end
+    end
+
+    # add dicts now
+    for p in ending
+        push!(lines, Format.format("  {:$(max_len)s} :", p))
+        push!(lines, format_dict(getfield(item, p); offset=max_len + 5))
+    end
+
+    return print(join(lines, "\n"))
 end
 
 ######################################################################
@@ -194,6 +222,8 @@ function _decode_meta(
     coll::AbstractString, ds::AbstractString, store::FFS, data::Dict
 )::FFSMeta
     column_types = Dict(k => decode_type(v) for (k, v) in pairs(data["column_types"]))
+    compression =
+        data["compression"] == "nothing" ? nothing : Compression(data["compression"])
     return FFSMeta(;
         collection=coll,
         dataset=ds,
@@ -202,7 +232,8 @@ function _decode_meta(
         column_types=column_types,
         timezone=TimeZone(data["timezone"]),
         index=decode(Index, data["index"]),
-        storage_format=StorageFormat(data["storage_format"]),
+        file_format=FileFormat(data["file_format"]),
+        compression=compression,
         last_modified=unix2zdt(data["last_modified"]),
         details=data["details"],
     )
@@ -227,7 +258,8 @@ function _encode_meta(meta::FFSMeta)::Dict
         "column_types" => Dict(k => encode_type(v) for (k, v) in meta.column_types),
         "timezone" => meta.timezone.name,
         "index" => encode(meta.index),
-        "storage_format" => string(meta.storage_format),
+        "file_format" => string(meta.file_format),
+        "compression" => string(meta.compression),
         "last_modified" => zdt2unix(Int, meta.last_modified),
         "details" => meta.details,
     )
@@ -266,7 +298,8 @@ end
 
 # Datafeeds/S3DB constants
 const S3DB_INDEX = TimeSeriesIndex("target_start", DAY)
-const S3DB_FORMAT = CSV_GZ
+const S3DB_FORMAT = FileFormats.CSV
+const S3DB_COMPRESSION = FileFormats.GZ
 
 """
     get_index(meta::FFSMeta)::Index
@@ -278,13 +311,22 @@ get_index(meta::S3DBMeta)::TimeSeriesIndex = S3DB_INDEX
 get_index(meta::FFSMeta)::Index = meta.index
 
 """
-    get_storage_format(meta::FFSMeta)::StorageFormat
-    get_storage_format(meta::S3DBMeta)::StorageFormat
+    get_file_format(meta::FFSMeta)::FileFormat
+    get_file_format(meta::S3DBMeta)::FileFormat
 
-Gets the [`StorageFormat`](@ref) from a dataset's [`S3Meta`](@ref)
+Gets the [`FileFormat`](@ref) from a dataset's [`S3Meta`](@ref)
 """
-get_storage_format(meta::S3DBMeta)::StorageFormat = S3DB_FORMAT
-get_storage_format(meta::FFSMeta)::StorageFormat = meta.storage_format
+get_file_format(meta::S3DBMeta)::FileFormat = S3DB_FORMAT
+get_file_format(meta::FFSMeta)::FileFormat = meta.file_format
+
+"""
+    get_file_compression(meta::FFSMeta)::Union{Compression,Nothing}
+    get_file_compression(meta::S3DBMeta)::Union{Compression,Nothing}
+
+Gets the [`Compression`](@ref) from a dataset's [`S3Meta`](@ref)
+"""
+get_file_compression(meta::S3DBMeta)::Union{Compression,Nothing} = S3DB_COMPRESSION
+get_file_compression(meta::FFSMeta)::Union{Compression,Nothing} = meta.compression
 
 """
     gen_s3_file_key(indexed_val::Any, metadata::S3Meta)::String
@@ -348,13 +390,7 @@ function filter_df!(
 ) where {T}
     if !isnothing(s3_key)
         hash_val = _s3_key_to_hash_val(s3_key, metadata)
-        try
-            _filter_df!(df, start, stop, get_index(metadata), hash_val)
-        catch err
-            if isa(err, MethodError) || throw(err)
-                _filter_df!(df, start, stop, get_index(metadata))
-            end
-        end
+        _filter_df!(df, start, stop, get_index(metadata), hash_val)
     else
         _filter_df!(df, start, stop, get_index(metadata))
     end
@@ -373,14 +409,14 @@ function create_partitions(df::DataFrame, metadata::S3Meta)::GroupedDataFrame
 end
 
 function _hash_val_to_s3_key(hash_val::AbstractString, meta::S3Meta)::String
-    file_ext = value(get_storage_format(meta))
-    return joinpath(meta.store.prefix, meta.collection, meta.dataset, "$hash_val.$file_ext")
+    file_ext = FileFormats.extension(get_file_format(meta), get_file_compression(meta))
+    return joinpath(meta.store.prefix, meta.collection, meta.dataset, "$hash_val$file_ext")
 end
 
 function _s3_key_to_hash_val(s3_key::AbstractString, meta::S3Meta)::String
     key_prefix = joinpath(meta.store.prefix, meta.collection, meta.dataset)
-    file_ext = value(get_storage_format(meta))
-    return chop(s3_key; head=length(key_prefix) + 1, tail=length(file_ext) + 1)
+    file_ext = FileFormats.extension(get_file_format(meta), get_file_compression(meta))
+    return chop(s3_key; head=length(key_prefix) + 1, tail=length(file_ext))
 end
 
 ########################################################################################
@@ -436,7 +472,7 @@ function _filter_df!(
 
     if hash_zdt in (lower, upper)
         trace(LOGGER, "Filtering DataFrame for: '$hash_val'")
-        _filter!(df, start, stop, index)
+        _filter_df!(df, start, stop, index)
     elseif hash_zdt < lower || hash_zdt > upper
         trace(LOGGER, "Skipping filter and emptying DataFrame for '$hash_val")
         empty!(df)
@@ -447,7 +483,7 @@ function _filter_df!(
     return nothing
 end
 
-function _filter!(
+function _filter_df!(
     df::DataFrame, start::ZonedDateTime, stop::ZonedDateTime, index::TimeSeriesIndex
 )
     # zdt index may be still represented as int in the df depending on at which stage

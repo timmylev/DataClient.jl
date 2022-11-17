@@ -6,7 +6,6 @@ using DataClient:
     PartitionSize,
     S3DB,
     S3DBMeta,
-    StorageFormat,
     TIMEZONES,
     create_partitions,
     decode,
@@ -40,10 +39,6 @@ using WeakRefStrings
         @test value(DAY) == Day(1)
         @test value(MONTH) == Month(1)
         @test value(YEAR) == Year(1)
-
-        @test StorageFormat("CSV_GZ") == CSV_GZ
-
-        @test value(CSV_GZ) == "csv.gz"
     end
 
     @testset "test encode/decode index" begin
@@ -140,7 +135,8 @@ using WeakRefStrings
                 ),
                 timezone=tz"America/New_York",
                 index=TimeSeriesIndex("target_start", DAY),
-                storage_format=CSV_GZ,
+                file_format=FileFormats.CSV,
+                compression=FileFormats.GZ,
                 last_modified=ZonedDateTime(2022, 1, 1, tz"UTC"),
             )
             evaluated = get_metadata(coll, ds, store)
@@ -149,7 +145,8 @@ using WeakRefStrings
             @test evaluated.column_order == expected.column_order
             @test evaluated.column_types == expected.column_types
             @test evaluated.index == expected.index
-            @test evaluated.storage_format == expected.storage_format
+            @test evaluated.file_format == expected.file_format
+            @test evaluated.compression == expected.compression
             @test evaluated.timezone == expected.timezone
         end
 
@@ -201,7 +198,8 @@ using WeakRefStrings
                 ),
                 timezone=tz"America/New_York",
                 index=TimeSeriesIndex("my_key", DAY),
-                storage_format=DataClient.CSV_GZ,
+                file_format=FileFormats.CSV,
+                compression=FileFormats.GZ,
                 last_modified=ZonedDateTime(2022, 1, 1, tz"UTC"),
             )
             expected = JSON.json(
@@ -213,7 +211,8 @@ using WeakRefStrings
                         "_type" => "TimeSeriesIndex",
                         "_attr" => Dict("key" => "my_key", "partition_size" => "DAY"),
                     ),
-                    "storage_format" => "CSV_GZ",
+                    "file_format" => "CSV",
+                    "compression" => "GZ",
                     "last_modified" => 1640995200,
                     "details" => nothing,
                 ),
@@ -339,7 +338,7 @@ using WeakRefStrings
 
     @testset "test TimeSeriesIndex functions" begin
         dt2unix(dt) = convert(Int, datetime2unix(dt))
-        function gen_meta(index, fmt=CSV_GZ)
+        function gen_meta(index, fmt=FileFormats.CSV, com=FileFormats.GZ)
             return FFSMeta(;  # helper func to generate test metadata
                 collection="coll",
                 dataset="ds",
@@ -348,40 +347,41 @@ using WeakRefStrings
                 column_types=Dict("target_start" => ZonedDateTime),
                 timezone=tz"America/New_York",
                 index=index,
-                storage_format=fmt,
+                file_format=fmt,
+                compression=com,
                 last_modified=ZonedDateTime(2022, 1, 1, tz"UTC"),
             )
         end
 
         @testset "test gen_s3_file_key" begin
             dt = DateTime(2022, 3, 4, 5, 15)  # test dt
-            ext = value(CSV_GZ)
+            ext = FileFormats.extension(FileFormats.CSV, FileFormats.GZ)
 
             # Test HOUR partition
             meta = gen_meta(TimeSeriesIndex("my_key", HOUR))
             zdt = ZonedDateTime(dt, tz"UTC")
             expected = dt2unix(DateTime(2022, 3, 4, 5))  # hour-floored
-            @test gen_s3_file_key(zdt, meta) == "prefix/coll/ds/year=2022/$expected.$ext"
+            @test gen_s3_file_key(zdt, meta) == "prefix/coll/ds/year=2022/$expected$ext"
 
             # HOUR partition but non-utc, the hash func should converts it to utc
             zdt = ZonedDateTime(dt, tz"UTC+6")
             expected = dt2unix(DateTime(2022, 3, 3, 23))  # utc-ed then hour-floored
-            @test gen_s3_file_key(zdt, meta) == "prefix/coll/ds/year=2022/$expected.$ext"
+            @test gen_s3_file_key(zdt, meta) == "prefix/coll/ds/year=2022/$expected$ext"
 
             # Test DAY partition
             meta = gen_meta(TimeSeriesIndex("my_key", DAY))
             expected = dt2unix(DateTime(2022, 3, 3))  # day-floored
-            @test gen_s3_file_key(zdt, meta) == "prefix/coll/ds/year=2022/$expected.$ext"
+            @test gen_s3_file_key(zdt, meta) == "prefix/coll/ds/year=2022/$expected$ext"
 
             # Test MONTH partition
             meta = gen_meta(TimeSeriesIndex("my_key", MONTH))
             expected = dt2unix(DateTime(2022, 3, 1))  # Month-floored
-            @test gen_s3_file_key(zdt, meta) == "prefix/coll/ds/year=2022/$expected.$ext"
+            @test gen_s3_file_key(zdt, meta) == "prefix/coll/ds/year=2022/$expected$ext"
 
             # Test YEAR partition
             meta = gen_meta(TimeSeriesIndex("my_key", YEAR))
             expected = dt2unix(DateTime(2022, 1, 1))  # Year-floored
-            @test gen_s3_file_key(zdt, meta) == "prefix/coll/ds/year=2022/$expected.$ext"
+            @test gen_s3_file_key(zdt, meta) == "prefix/coll/ds/year=2022/$expected$ext"
         end
 
         @testset "test gen_s3_file_keys" begin
@@ -389,13 +389,13 @@ using WeakRefStrings
             stop = ZonedDateTime(2022, 1, 4, 22, 1, tz"UTC-4")
             start_utc = DateTime(astimezone(start, tz"UTC"))
             stop_utc = DateTime(astimezone(stop, tz"UTC"))
-            ext = value(CSV_GZ)
+            ext = FileFormats.extension(FileFormats.CSV, FileFormats.GZ)
 
             # Test HOUR partition
             meta = gen_meta(TimeSeriesIndex("my_key", HOUR))
             hashes = gen_s3_file_keys(start, stop, meta)
             expected = [
-                "prefix/coll/ds/year=$(Dates.year(dt))/$(dt2unix(dt)).$ext" for
+                "prefix/coll/ds/year=$(Dates.year(dt))/$(dt2unix(dt))$ext" for
                 dt in floor(start_utc, Hour):Hour(1):floor(stop_utc, Hour)
             ]
             @test expected == hashes
@@ -404,7 +404,7 @@ using WeakRefStrings
             meta = gen_meta(TimeSeriesIndex("my_key", DAY))
             hashes = gen_s3_file_keys(start, stop, meta)
             expected = [
-                "prefix/coll/ds/year=$(Dates.year(dt))/$(dt2unix(dt)).$ext" for
+                "prefix/coll/ds/year=$(Dates.year(dt))/$(dt2unix(dt))$ext" for
                 dt in floor(start_utc, Day):Day(1):floor(stop_utc, Day)
             ]
             @test expected == hashes
@@ -413,7 +413,7 @@ using WeakRefStrings
             meta = gen_meta(TimeSeriesIndex("my_key", MONTH))
             hashes = gen_s3_file_keys(start, stop, meta)
             expected = [
-                "prefix/coll/ds/year=$(Dates.year(dt))/$(dt2unix(dt)).$ext" for
+                "prefix/coll/ds/year=$(Dates.year(dt))/$(dt2unix(dt))$ext" for
                 dt in floor(start_utc, Month):Month(1):floor(stop_utc, Month)
             ]
             @test expected == hashes
@@ -422,7 +422,7 @@ using WeakRefStrings
             meta = gen_meta(TimeSeriesIndex("my_key", YEAR))
             hashes = gen_s3_file_keys(start, stop, meta)
             expected = [
-                "prefix/coll/ds/year=$(Dates.year(dt))/$(dt2unix(dt)).$ext" for
+                "prefix/coll/ds/year=$(Dates.year(dt))/$(dt2unix(dt))$ext" for
                 dt in floor(start_utc, Year):Year(1):floor(stop_utc, Year)
             ]
             @test expected == hashes
