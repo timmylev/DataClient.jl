@@ -76,23 +76,32 @@ function get_backend(store_id::String)::Store
     end
 end
 
-function _parse_backend_path(backend_uri::String)::Store
+function _parse_backend_path(backend_uri::AbstractString)::Store
     type, uri = split(backend_uri, ":"; limit=2)
 
-    if type in ("s3db", "ffs")
-        if startswith(uri, "s3://")
-            parts = split(replace(uri, r"^s3://" => ""), "/"; limit=2)
-            bucket, prefix = length(parts) == 2 ? parts : (parts[1], "")
-            return type == "s3db" ? S3DB(bucket, prefix) : FFS(bucket, prefix)
-        else
-            throw(
-                ConfigFileError(
-                    "Invalid uri scheme '$backend_uri' for backend type '$type'"
-                ),
-            )
-        end
+    return if type == "ffs"
+        bucket, prefix = _parse_s3_uri(uri)
+        FFS(bucket, prefix)
+
+    elseif type == "s3db"
+        bucket, prefix = _parse_s3_uri(uri)
+        S3DB(bucket, prefix)
+
+    elseif startswith(type, "s3db")
+        bucket, prefix = _parse_s3_uri(uri)
+        _, file_format, compression, partition = split(type, "-")
+        S3DB(bucket, prefix, partition, file_format, compression)
 
     else
         throw(ConfigFileError("Unknown backend type '$type' for '$backend_uri'"))
+    end
+end
+
+function _parse_s3_uri(uri::AbstractString)
+    return if startswith(uri, "s3://")
+        parts = split(replace(uri, r"^s3://" => ""), "/"; limit=2)
+        bucket, prefix = length(parts) == 2 ? parts : (parts[1], "")
+    else
+        throw(ConfigFileError("Invalid uri scheme '$uri'"))
     end
 end

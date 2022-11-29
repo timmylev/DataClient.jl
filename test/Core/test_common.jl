@@ -12,7 +12,7 @@ using DataClient:
     decode_type,
     encode,
     encode_type,
-    filter_df!,
+    filter_df,
     gen_s3_file_key,
     gen_s3_file_keys,
     get_metadata,
@@ -428,7 +428,7 @@ using WeakRefStrings
             @test expected == hashes
         end
 
-        @testset "test filter_df!" begin
+        @testset "test filter_df" begin
             test_dfs = Dict()
             meta = gen_meta(TimeSeriesIndex("ts", DAY))
 
@@ -446,9 +446,10 @@ using WeakRefStrings
             expected_zdts = Set(collect(query_start:Hour(1):query_stop))
 
             for (key, df) in pairs(test_dfs)
-                filter_df!(df, query_start, query_stop, meta; s3_key=key)
+                df = filter_df(df, query_start, query_stop, meta; s3_key=key)
                 # show that data is filtered out correctly
-                @test isempty(setdiff(df.ts, expected_zdts))
+                @test isempty(df) || isempty(setdiff(df.ts, expected_zdts))
+                test_dfs[key] = df
             end
             queried_data = vcat(values(test_dfs)...)
             # show that data there are no gaps in queried data

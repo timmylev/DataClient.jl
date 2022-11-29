@@ -33,8 +33,9 @@ end
 function _load_df(
     data::Union{AbstractString,Vector{UInt8}}, ::Val{FileFormats.ARROW}
 )::DataFrame
-    # copying converts Arrow Lists (non-mutable) to Julia Vectors
-    return copy(DataFrame(Arrow.Table(data)))
+    # Note: these are memory mapped Arrow primitives, conversion to julia types will be
+    # done later down the pipeline.
+    return DataFrame(Arrow.Table(data))
 end
 
 function _decompress(data::Vector{UInt8}, compression::Compression)::Vector{UInt8}

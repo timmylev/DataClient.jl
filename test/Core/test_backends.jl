@@ -55,8 +55,8 @@ using DataStructures
             "Unknown backend type 'ffs2' for 'ffs2:s3://my-bucket/my-prefix/'"
         ) reload_backend(joinpath(cfg_prefix, "configs_invalid_uri.yaml"))
 
-        @test_throws ConfigFileError(
-            "Invalid uri scheme 'ffs:s4://my-bucket/my-prefix/' for backend type 'ffs'"
-        ) reload_backend(joinpath(cfg_prefix, "configs_invalid_uri_2.yaml"))
+        @test_throws ConfigFileError("Invalid uri scheme 's4://my-bucket/my-prefix/'") reload_backend(
+            joinpath(cfg_prefix, "configs_invalid_uri_2.yaml")
+        )
     end
 end

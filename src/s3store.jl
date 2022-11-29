@@ -25,6 +25,11 @@ const _period = Dict(HOUR => Hour(1), DAY => Day(1), MONTH => Month(1), YEAR => 
 PartitionSize(str::AbstractString)::PartitionSize = _partition_size[str]
 value(key::PartitionSize) = _period[key]
 
+# Datafeeds/S3DB constants
+const S3DB_DEFAULT_PARTITION = DAY
+const S3DB_DEFAULT_FORMAT = FileFormats.CSV
+const S3DB_DEFAULT_COMPRESSION = FileFormats.GZ
+
 """
     Index
 
@@ -102,6 +107,35 @@ must conform to the standards set by Datafeeds.
 struct S3DB <: S3Store
     bucket::String
     prefix::String
+    index::Index
+    file_format::FileFormat
+    compression::Compression
+end
+
+function S3DB(bucket::AbstractString, prefix::AbstractString)
+    return S3DB(
+        bucket,
+        prefix,
+        TimeSeriesIndex("target_start", S3DB_DEFAULT_PARTITION),
+        S3DB_DEFAULT_FORMAT,
+        S3DB_DEFAULT_COMPRESSION,
+    )
+end
+
+function S3DB(
+    bucket::AbstractString,
+    prefix::AbstractString,
+    partition_size::AbstractString,
+    file_format::AbstractString,
+    compression::AbstractString,
+)
+    return S3DB(
+        bucket,
+        prefix,
+        TimeSeriesIndex("target_start", PartitionSize(uppercase(partition_size))),
+        FileFormat(uppercase(file_format)),
+        Compression(uppercase(compression)),
+    )
 end
 
 """
@@ -273,7 +307,7 @@ end
 ## `S3DB` and `FFS`):                                                                 ##
 ##    1. gen_s3_file_key                                                              ##
 ##    2. gen_s3_file_keys                                                             ##
-##    3. filter_df!                                                                   ##
+##    3. filter_df                                                                    ##
 ##    4. create_partitions                                                            ##
 ##                                                                                    ##
 ## They are simply generic implementations that call a lower level group of functions ##
@@ -287,7 +321,7 @@ end
 ##    2. _hash_keys(start, stop, index)::Vector{String}                               ##
 ##      -> Generates all hash keys that fall between indexed range start/stop         ##
 ##                                                                                    ##
-##    3. _filter_df!(df, start, stop, index; hash_val)                                ##
+##    3. _filter_df(df, start, stop, index; hash_val)::DataFrame                      ##
 ##      -> Filters the input df for indexed range start/stop. Optionally provide the  ##
 ##         hash if a df was obtained from source file with that hash (optimisation)   ##
 ##                                                                                    ##
@@ -298,8 +332,6 @@ end
 
 # Datafeeds/S3DB constants
 const S3DB_INDEX = TimeSeriesIndex("target_start", DAY)
-const S3DB_FORMAT = FileFormats.CSV
-const S3DB_COMPRESSION = FileFormats.GZ
 
 """
     get_index(meta::FFSMeta)::Index
@@ -316,7 +348,7 @@ get_index(meta::FFSMeta)::Index = meta.index
 
 Gets the [`FileFormat`](@ref) from a dataset's [`S3Meta`](@ref)
 """
-get_file_format(meta::S3DBMeta)::FileFormat = S3DB_FORMAT
+get_file_format(meta::S3DBMeta)::FileFormat = meta.store.file_format
 get_file_format(meta::FFSMeta)::FileFormat = meta.file_format
 
 """
@@ -325,7 +357,7 @@ get_file_format(meta::FFSMeta)::FileFormat = meta.file_format
 
 Gets the [`Compression`](@ref) from a dataset's [`S3Meta`](@ref)
 """
-get_file_compression(meta::S3DBMeta)::Union{Compression,Nothing} = S3DB_COMPRESSION
+get_file_compression(meta::S3DBMeta)::Union{Compression,Nothing} = meta.store.compression
 get_file_compression(meta::FFSMeta)::Union{Compression,Nothing} = meta.compression
 
 """
@@ -367,7 +399,7 @@ function gen_s3_metadata_key(
 end
 
 """
-    filter_df!(
+    filter_df(
         df::DataFrame,
         start::T,
         stop::T,
@@ -381,21 +413,19 @@ must be compatible with the index used in `metadata`.
 Optionally provide the source `s3_key` that is associated with the input `DataFrame`
 (if applicable) for index-specific optimizatinos.
 """
-function filter_df!(
+function filter_df(
     df::DataFrame,
     start::T,
     stop::T,
     metadata::S3Meta;
     s3_key::Union{AbstractString,Nothing}=nothing,
-) where {T}
-    if !isnothing(s3_key)
+)::DataFrame where {T}
+    return if !isnothing(s3_key)
         hash_val = _s3_key_to_hash_val(s3_key, metadata)
-        _filter_df!(df, start, stop, get_index(metadata), hash_val)
+        _filter_df(df, start, stop, get_index(metadata), hash_val)
     else
-        _filter_df!(df, start, stop, get_index(metadata))
+        _filter_df(df, start, stop, get_index(metadata))
     end
-
-    return nothing
 end
 
 """
@@ -421,9 +451,9 @@ end
 
 ########################################################################################
 ####  `TimeSeriesIndex` Implementations of the Following Required Functions:          ##
-##    ->  _hash_key(...)                                                             ##
-##    ->  _hash_keys(...)                                                            ##
-##    ->  _filter_df!(...)                                                            ##
+##    ->  _hash_key(...)                                                              ##
+##    ->  _hash_keys(...)                                                             ##
+##    ->  _filter_df(...)                                                             ##
 ##    ->  _create_partitions(...)                                                     ##
 ########################################################################################
 
@@ -459,42 +489,41 @@ end
 _convert(::Type{ZonedDateTime}, val::ZonedDateTime) = val
 _convert(::Type{Int}, val::ZonedDateTime) = zdt2unix(Int, val)
 
-function _filter_df!(
+function _filter_df(
     df::DataFrame,
     start::ZonedDateTime,
     stop::ZonedDateTime,
     index::TimeSeriesIndex,
     hash_val::AbstractString,
-)
+)::DataFrame
     hash_zdt = _hash_key_to_zdt(hash_val, index)
     lower = _hash(start, index)
     upper = _hash(stop, index)
 
     if hash_zdt in (lower, upper)
         trace(LOGGER, "Filtering DataFrame for: '$hash_val'")
-        _filter_df!(df, start, stop, index)
+        return _filter_df(df, start, stop, index)
     elseif hash_zdt < lower || hash_zdt > upper
         trace(LOGGER, "Skipping filter and emptying DataFrame for '$hash_val")
-        empty!(df)
+        return DataFrame()
     else
         trace(LOGGER, "Skipping filter for DataFrame '$hash_val")
     end
 
-    return nothing
+    return df
 end
 
-function _filter_df!(
+function _filter_df(
     df::DataFrame, start::ZonedDateTime, stop::ZonedDateTime, index::TimeSeriesIndex
-)
+)::DataFrame
     # zdt index may be still represented as int in the df depending on at which stage
     # are we doing this filtering
     index_type_in_df = eltype(df[!, index.key])
     lower, upper = _convert(index_type_in_df, start), _convert(index_type_in_df, stop)
 
     filter_func(val) = val >= lower && val <= upper
-    filter!(Symbol(index.key) => filter_func, df)
 
-    return nothing
+    return filter(Symbol(index.key) => filter_func, df)
 end
 
 function _create_partitions(df::DataFrame, index::TimeSeriesIndex)::GroupedDataFrame

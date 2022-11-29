@@ -77,7 +77,7 @@ DataClient.gen_s3_file_key
 DataClient.gen_s3_file_keys
 DataClient.gen_s3_metadata_key
 DataClient.create_partitions
-DataClient.filter_df!
+DataClient.filter_df
 ```
 
 ### Other Helper Functions
