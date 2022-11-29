@@ -1,5 +1,11 @@
 # Changelog
 
+## Version 1.13.0
+
+### Features
+* Support Arrow format for the `S3DB` data
+ [!17](https://gitlab.invenia.ca/invenia/Datafeeds/DataClient.jl/-/merge_requests/17)
+
 ## Version 1.12.0
 
 ### Features

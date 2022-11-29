@@ -190,10 +190,11 @@ function _merge(dataframe::AbstractDataFrame, s3key::AbstractString, metadata::F
     @timeit to "copy_df" df = copy(dataframe)
 
     # encode ZonedDateTimes as unix timestamps
+    encode_zdt(zdt) = isa(zdt, ZonedDateTime) ? zdt2unix(Int, zdt) : zdt
     @timeit to "zdt_to_unix" begin
         for (col, type) in pairs(metadata.column_types)
-            if type == ZonedDateTime
-                df[!, col] = zdt2unix.(Int, df[!, col])
+            if ZonedDateTime <: type
+                df[!, col] = encode_zdt.(df[!, col])
             end
         end
     end

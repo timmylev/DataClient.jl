@@ -39,7 +39,7 @@ const LOGGER = getlogger(@__MODULE__)
 # register/hardcode any centralized stores here
 const CENTRALIZED_STORES = OrderedDict{String,String}(
     "datafeeds" => "s3db:s3://invenia-datafeeds-output/version5/aurora/gz/",
-    "datafeeds-arrow" => "ffs:s3://invenia-datafeeds-output/version5/arrow/zst/",
+    "datafeeds-arrow" => "s3db-arrow-zst-day:s3://invenia-datafeeds-output/version5/arrow/zst/day/",
     "public-data" => "ffs:s3://invenia-private-datasets/DataClient/ffs/arrow/zst/",
     "ercot-nda" => "ffs:s3://invenia-ercot-nda-mw6ez7cwz9gtdqw1qejn81bfkdwdouse1a-s3alias/derived_works/DataClient/ffs/arrow/zst/",
     "miso-nda" => "ffs:s3://invenia-miso-nda-5twngkbmrczu6xd9uppda18b5995yuse1a-s3alias/derived_works/DataClient/ffs/arrow/zst/",

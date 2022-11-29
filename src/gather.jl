@@ -205,7 +205,7 @@ function _load_s3_files(
 
                     @timeit to "df load" df = load_df(file_path, file_format, compression)
 
-                    @timeit to "df filter" filter_df!(df, start, stop, meta; s3_key=key)
+                    @timeit to "df filter" df = filter_df(df, start, stop, meta; s3_key=key)
 
                     @timeit to "df xform" _process_dataframe!(df, meta)
 
@@ -234,13 +234,6 @@ function _load_s3_files(
 end
 
 function _process_dataframe!(df::DataFrame, metadata::S3DBMeta)
-    # reorder the df columns and sort the rows
-    order_cols = ["target_start", "target_end", "target_bounds", "release_date", "tag"]
-    other_cols = [c for c in names(df) if !(c in order_cols)]
-    col_order = vcat(order_cols[1:4], other_cols, order_cols[end])
-    select!(df, col_order)
-    sort!(df, col_order)
-
     # convert unix datetimes to zdt
     zdt_cols = ["target_start", "target_end", "release_date"]
     for col in zdt_cols
@@ -248,13 +241,15 @@ function _process_dataframe!(df::DataFrame, metadata::S3DBMeta)
     end
 
     # decode 'list' types
-    parser(el) = ismissing(el) ? el : identity.(JSON.parse(el; null=missing))
+    parse_list(el) = ismissing(el) ? el : identity.(JSON.parse(el; null=missing))
+    parse_bool(el) = ismissing(el) ? el : convert(Bool, el)
+
     for (col, type) in pairs(metadata.meta["type_map"])
         if type == "list"
-            df[!, col] = parser.(df[!, col])
+            df[!, col] = parse_list.(df[!, col])
 
         elseif type == "bool"
-            df[!, col] = convert.(Bool, df[!, col])
+            df[!, col] = parse_bool.(df[!, col])
         end
     end
 

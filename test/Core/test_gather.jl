@@ -118,17 +118,7 @@ using TimeZones: zdt2unix
         end
 
         _process_dataframe!(df, metadata)
-        # show that columns are reordered
-        @test names(df) == [
-            "target_start",
-            "target_end",
-            "target_bounds",
-            "release_date",
-            "off_nonspin_offer_curve",
-            "mw_blocks",
-            "multi_hour",
-            "tag",
-        ]
+
         # show that zdts are decoded
         @test df.target_start == zdts
         @test df.target_end == zdts
