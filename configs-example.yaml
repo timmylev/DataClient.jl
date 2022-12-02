@@ -11,3 +11,18 @@ prioritize-additional-stores: True
 
 # (optional, default=False) Disable all hardcoded centralized stores.
 disable-centralized: True
+
+# (optionl, no default) - The path to a local directory that is used as the cache.
+# Files cached here will be persistent (not removed at the end of the julia session)
+# and can be reused across sessions.
+DATACLIENT_CACHE_DIR: ./cache/
+
+# (optionl, default=20000) The max cache size in MB before older files are removed
+DATACLIENT_CACHE_SIZE_MB: 50000
+
+# (optionl, default=90) Files in the custom cache dir (if specified) that are older
+# than this period will be removed during initialization.
+DATACLIENT_CACHE_EXPIRE_AFTER_DAYS: 7
+
+# (optionl, default=true) Whether or not to decompress S3 files before caching.
+DATACLIENT_CACHE_DECOMPRESS:  true

@@ -68,11 +68,11 @@ An `Index` option available for use by [`FFS`](@ref).
 - `key`: The `DataFrame` column name to be used as the index, this column must be a
     `ZonedDateTime`.
 - `partition_size`: Basically how much data a single s3 file in the backend should
-    contain, expressed as a time period. Selecting a good partition size will depend a
-    lot on the query pattern and how densely populated the dataset is across time. The
-    goal is to mimize the number of backend connections (i.e. number of individual files
-    transferred) while not retrieving excessive data that isn't actually required by
-    the query.
+    contain, expressed as a [`DataClient.PartitionSize`](@ref). Selecting a good
+    partition size will depend a lot on the query pattern and how densely populated the
+    dataset is across time. The goal is to mimize the number of backend connections
+    (i.e. number of individual files transferred) while not retrieving excessive data
+    that isn't actually required by the query.
 """
 struct TimeSeriesIndex <: Index
     key::String
