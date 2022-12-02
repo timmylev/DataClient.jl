@@ -9,13 +9,19 @@ The 4 main APIs that you will be using are:
 ## Listing/Locating Datasets
 
 `DataClient` works by connecting to a target data repository, known as a backend store.
-There are multiple stores available by default, and users can specify additional stores via a config file.
-The datasets available in each store are grouped by collection.
+There are multiple types/implementations of backend stores such as [`DataClient.S3DB`](@ref) and [`DataClient.FFS`](@ref), each having their own characteristics and use cases, though all of them share the same data access APIs.
+An instance of a store must be registered before it can be accessed via the APIs.
+There are a few centralized stores that are pre-registered as constants in the package (`DataClient.CENTRALIZED_STORES`) which makes them readily accessible.
+Additional user-defined stores can be registered via a simply config file in the user's project directory.
+We cover how to do this in [Inserting Datasets](#Inserting-Datasets) and [Configs and Backend](@ref).
+
+The datasets available in each store are grouped by collection, which provides an additional level of dataset namespacing.
 
 ```julia
 julia> using DataClient
 
-# Check for available stores, if a config file is present with additional stores specified, they will appear here
+# Check for available stores, if a config file is present with additional stores specified,
+# they will appear here.
 julia> get_backend()
 OrderedCollections.OrderedDict{String, DataClient.Store} with 5 entries:
   "datafeeds"       => S3DB("invenia-datafeeds-output", "version5/aurora/gz/" ...
@@ -27,18 +33,19 @@ OrderedCollections.OrderedDict{String, DataClient.Store} with 5 entries:
 julia> list_datasets()
 Dict{String, Dict{String, Vector{String}}} with 5 entries:
   "ercot-nda"       => Dict()
-  "datafeeds"       => Dict("nyiso"=>["dayahead_load", "dayahead_marketwide" ...
+  "datafeeds"       => Dict("nyiso"=>["dayahead_load", "dayahead_marketwide", ...
+  "datafeeds-arrow" => Dict("nyiso"=>["dayahead_load", "dayahead_marketwide", ...
   ...
 
-# List every dataset from the 'datafeeds' store.
+# List every dataset from the 'datafeeds-arrow' store.
 julia> list_datasets("datafeeds-arrow")
 Dict{String, Vector{String}} with 8 entries:
   "nyiso"   => ["dayahead_load", "dayahead_marketwide", "dayahead_price", "realtime_load", ...
   "spp"     => ["day_ahead_binding_constraints", "dayahead_load", "dayahead_marketwide", ...
   ...
 
-# List every dataset from the 'nyiso' collection in the 'datafeeds' store.
-julia> list_datasets("datafeeds", "nyiso")
+# List every dataset from the 'nyiso' collection in the 'datafeeds-arrow' store.
+julia> list_datasets("datafeeds-arrow", "nyiso")
  6-element Vector{String}:
   "dayahead_load"
   "dayahead_marketwide"
@@ -46,16 +53,16 @@ julia> list_datasets("datafeeds", "nyiso")
 ```
 
 Notice that there are two types of store available, [`DataClient.S3DB`](@ref) and [`DataClient.FFS`](@ref).
-Basically, `S3DB` a read-only store ([`insert`](@ref) operations will fail) because data in `S3DB` stores are generated and maintained by external systems such as the [Transmuter](https://gitlab.invenia.ca/invenia/Datafeeds/Transmuters) or the [S3DBConverter](https://gitlab.invenia.ca/invenia/Datafeeds/S3DBConverter) and we want to be sure to **not** make any modification.
+Basically, `S3DB` is a read-only store ([`insert`](@ref) operations will fail) because data in `S3DB` stores are generated and maintained by external systems such as the [Transmuter](https://gitlab.invenia.ca/invenia/Datafeeds/Transmuters) or the [S3DBConverter](https://gitlab.invenia.ca/invenia/Datafeeds/S3DBConverter), and we want to be sure to _not_ make any modification to such data.
 DataClient simply "plugs in" and reads what is available.
-Data within `FFS` stores on the other hand, are inserted using DataClient itself, where DataClient's native storage implementation applies, therefore both reads and writes are supported (provided that the caller has the appropriate IAM access).
+Data within `FFS` stores on the other hand, are inserted using DataClient itself, where DataClient's native storage implementation applies, so both reads and writes are supported (provided that the caller has the appropriate IAM access).
 
 ## Gathering Datasets
 
 When [`gather`](@ref)ing a dataset, the `collection` and `dataset` must be specified, but `store_id` is optional.
 When `store_id` is not specified, the order from [`get_backend`](@ref) is used to iteratively search through all available stores until the first store containing the requested `collection` and `dataset` is found (notice that `get_backend()` returns an `OrderedDict`).
 See [Configs and Backend](@ref) for more information about how the search order is determined.
-It is **always recommended** to provide a `store_id` for better performance and to avoid ambiguity.
+It is _always recommended_ to provide a `store_id` for better performance and to avoid ambiguity.
 
 ```julia
 julia> using DataClient
@@ -78,7 +85,7 @@ julia> df = gather("spp", "realtime_price", start, stop, "datafeeds-arrow")
 
 The `DataFrame` returned by [`gather`](@ref) contains `S3DB` (or `FFS`) metadata attached to it, which can be accessed via the Tables.jl metadata interface.
 ```julia
-meta = metadata(df)["metadata"]
+julia> meta = metadata(df)["metadata"]
 spp-realtime_price
   store    : DataClient.S3DB("invenia-datafeeds-output", "version5/arrow/zst_lv22/day/", ...
   timezone : tz"America/Chicago"
@@ -107,12 +114,12 @@ spp-realtime_price
 ### Caching
 More info can be found in the [`gather`](@ref) docs but by default, an ephemeral file cache is automatically instantiated for each Julia session to cache downloaded S3 files.
 This cache can be configured differently via a config file or environment variable.
-    * `DATACLIENT_CACHE_DIR` (String): The path to a local directory that is used as the cache. Files cached here will be persistent (not removed at the end of the julia session) and can be reused across sessions.
-    * `DATACLIENT_CACHE_SIZE_MB` (Int):  The max cache size in MB before older files are removed. The default is 20,000 MB.
-    * `DATACLIENT_CACHE_EXPIRE_AFTER_DAYS` (Int): Files in the custom cache dir (if specified) that are older than this period will be removed during initialization. The default is 90 days.
-    * `DATACLIENT_CACHE_DECOMPRESS` (Bool):  Whether or not to decompress S3 files before caching. THe default is `true`.
+* `DATACLIENT_CACHE_DIR` (String): The path to a local directory that is used as the cache. Files cached here will be persistent (not removed at the end of the julia session) and can be reused across sessions.
+* `DATACLIENT_CACHE_SIZE_MB` (Int):  The max cache size in MB before older files are removed. The default is 20,000 MB.
+* `DATACLIENT_CACHE_EXPIRE_AFTER_DAYS` (Int): Files in the custom cache dir (if specified) that are older than this period will be removed during initialization. The default is 90 days.
+* `DATACLIENT_CACHE_DECOMPRESS` (Bool):  Whether or not to decompress S3 files before caching. The default is `true`.
 
-The recommended way of configuring the above is by creating a config file in your project directory, this makes your configs persistent and gives you easy view/modify to them (see [Configs and Backend](@ref) for more information):
+The recommended way of configuring the above is by creating a config file in your project directory, this makes your configs persistent and gives you easy access to view/modify to them (see [Configs and Backend](@ref) for more information):
 ```sh
 cat > configs.yaml <<- EOF
 DATACLIENT_CACHE_DIR: "./cache/"
@@ -127,34 +134,39 @@ export DATACLIENT_CACHE_SIZE_MB=50000
 ```
 
 If setting environment variables in Julia, **be sure to set them before calling the `gather` function.** because that is when the cache is initialized.
-DataClient supports reloading configs (eg. used in [`reload_backend`](@ref)), but re-initializing the cache is not currently supported.
+While DataClient supports reloading configs (eg. used in [`reload_backend`](@ref)), but re-initializing the cache is not currently supported.
 ```julia
 ENV["DATACLIENT_CACHE_DIR"] = "./cache/"
 ENV["DATACLIENT_CACHE_SIZE_MB"] = 50000
 ```
 
 ### Timezone-naive Queries
-While all stored datasets contain tz-aware data (a current requirement when storing datasets), queries using a tz-naive `Date` (for 24-hrs of data) and a pair of `DateTime`s (start and end) are also supported (for compatibility with certain projects).
-This is simply for convenience, the relevant market's timezone (defined as a constant) will be attached to the tz-naive `DateTime` to form a `ZonedDateTime` internally before the query runs.
+While _all_ stored datasets use a `ZonedDateTime` column as the index (see [Indexing](#Note-About-Indexing)), queries using a tz-naive `Date` (for 24-hrs of data) and a pair of `DateTime`s (start and end) are also supported for compatibility with certain projects.
+This is simply for convenience, the relevant market's timezone (defined as a constant internally) will be attached to the tz-naive `DateTime` to form a `ZonedDateTime` internally before the query runs.
 This will fail if the input `DateTime` is an ambiguous or non-existent datetime (due to DST transitions) for the relevant timezone.
 
 ```julia
 julia> using Dates
 
-julia> start = DateTime(2020, 2, 13)
-julia> stop = DateTime(2020, 2, 13, 23)
+julia> date = Date(2020, 3, 13)
+julia> df = gather("spp", "realtime_price", date, "datafeeds-arrow")
+julia> eltype(df.target_start)
+DateTime
+
+julia> start = DateTime(2020, 3, 13)
+julia> stop = DateTime(2020, 3, 13, 23)
 julia> df = gather("spp", "realtime_price", start, stop, "datafeeds-arrow")
 julia> eltype(df.target_start)
 DateTime
 
-julia> date = Date(2020, 2, 13)
-julia> df = gather("spp", "realtime_price", date, "datafeeds-arrow")
-julia> eltype(df.target_start)
-DateTime
+# March 2020 DST happens on the 8th for SPP's timezone
+julia> df = gather("spp", "realtime_price", DateTime(2020, 3, 8, 2), stop, "datafeeds-arrow")
+ERROR: NonExistentTimeError: Local DateTime 2020-03-08T02:00:00 does not exist within America/Chicago
 ```
 
 Notice that the datetime columns in the resulting `DataFrame` also has its timezone stripped.
-Note that **the datetimes were NOT converted into UTC before the timezone was stripped.**
+Note that _the datetimes were NOT converted into UTC before the timezone was stripped._
+This may be problematic when querying for data that span the fall DST transitions because of the ambiguity caused by the repeated hour.
 To retain the timezones in the resulting data, a `strip_tz=false` argument must be specified.
 
 ```julia
@@ -163,7 +175,7 @@ julia> eltype(df.target_start)
 ZonedDateTime
 ```
 
-Using tz-naive `DateTime`s should generally be avoided because it is bad practice to represent non-UTC datetimes using a `DateTime`.
+Using tz-naive `DateTime`s should generally be avoided because it is bad practice to represent non-UTC datetimes using a `DateTime` for obvious reasons.
 There is no performance benefit too in this case as is it simply supported for compatibility reasons with certain projects.
 
 ## Inserting Datasets
