@@ -1,183 +1,281 @@
 # Getting Started
 
-## Checking for Available Stores
-Centralized stores such as S3DB (Datafeeds) are hard-coded in the package itself thus available by default.
-Additional stores such as personal S3 buckets can be added via a config file, see [Configs and Backend](@ref) for more details.
+The 4 main APIs that you will be using are:
+1. [`get_backend`](@ref) - Gets available backend stores
+2. [`list_datasets`](@ref) - Lists available datasets
+3. [`gather`](@ref) - Queries data from a target dataset
+4. [`insert`](@ref) - Inserts new data into a new or existing dataset (Only supported for certain types of stores)
+
+## Listing/Locating Datasets
+
+`DataClient` works by connecting to a target data repository, known as a backend store.
+There are multiple stores available by default, and users can specify additional stores via a config file.
+The datasets available in each store are grouped by collection.
+
 ```julia
 julia> using DataClient
 
-# By default, the DataClient checks `pwd()` for `configs.yaml` and loads it in if it exists.
-# This example shows that the config file does not exist, which is not a problem because
-# default configs exist.
-julia> stores = get_backend()
-[info | DataClient]: Config file '/Users/timmy/Invenia/DataClient.jl/configs.yaml' is not available, using default stores.
-OrderedCollections.OrderedDict{String, DataClient.Store} with 1 entry:
-  "datafeeds" => S3DB("invenia-datafeeds-output", "version5/aurora/gz/")
-
-julia> store = get_backend("datafeeds")
-DataClient.S3DB("invenia-datafeeds-output", "version5/aurora/gz/")
-
-# Now say you've just added or modified the config file in the default config file path,
-# an explicit reload is required for the config to take effect (in the same Julia session).
-julia> reload_configs()
-
-# If you are using a non-default config file path, simply specify the path. For example:
-julia> reload_configs(joinpath("custom-path", "custom-file-name.yaml"))
-
-# The updated configs now shows up.
-julia> stores = get_backend()
-OrderedCollections.OrderedDict{String, DataClient.Store} with 2 entries:
-  "datafeeds"    => S3DB("invenia-datafeeds-output", "version5/aurora/gz/")
-  "tim-personal" => FFS("tim-buck", "test-insert/")
-```
-
-## Listing Datasets
-Each backend store is completely isolated from all other stores, making them the first level of namespace-ing for datasets.
-Collections provide an additional dataset namespace because datasets are grouped into collections and each store can have multiple collections.
-Therefore, the true 'path' of a datasets can be thought of as `<store-id>.<collection>.<dataset>`.
-```julia
-julia> using DataClient
+# Check for available stores, if a config file is present with additional stores specified, they will appear here
+julia> get_backend()
+OrderedCollections.OrderedDict{String, DataClient.Store} with 5 entries:
+  "datafeeds"       => S3DB("invenia-datafeeds-output", "version5/aurora/gz/" ...
+  "datafeeds-arrow" => S3DB("invenia-datafeeds-output", "version5/arrow/zst_lv22/day/" ...
+  "public-data"     => FFS("invenia-private-datasets", "DataClient/ffs/arrow/zst/")
+  ...
 
 # List every dataset from every available store.
 julia> list_datasets()
-Dict{String, Dict{String, Vector{String}}} with 2 entries:
-  "datafeeds"    => Dict("nyiso"=>["dayahead_load", "dayahead_marketwide", ....
-  "tim-personal" => Dict("nyiso"=>["realtime_price"])
+Dict{String, Dict{String, Vector{String}}} with 5 entries:
+  "ercot-nda"       => Dict()
+  "datafeeds"       => Dict("nyiso"=>["dayahead_load", "dayahead_marketwide" ...
+  ...
 
 # List every dataset from the 'datafeeds' store.
-julia> list_datasets("datafeeds")
+julia> list_datasets("datafeeds-arrow")
 Dict{String, Vector{String}} with 8 entries:
   "nyiso"   => ["dayahead_load", "dayahead_marketwide", "dayahead_price", "realtime_load", ...
   "spp"     => ["day_ahead_binding_constraints", "dayahead_load", "dayahead_marketwide", ...
- ...
+  ...
 
 # List every dataset from the 'nyiso' collection in the 'datafeeds' store.
 julia> list_datasets("datafeeds", "nyiso")
  6-element Vector{String}:
   "dayahead_load"
   "dayahead_marketwide"
- ...
+  ...
 ```
 
+Notice that there are two types of store available, [`DataClient.S3DB`](@ref) and [`DataClient.FFS`](@ref).
+Basically, `S3DB` a read-only store ([`insert`](@ref) operations will fail) because data in `S3DB` stores are generated and maintained by external systems such as the [Transmuter](https://gitlab.invenia.ca/invenia/Datafeeds/Transmuters) or the [S3DBConverter](https://gitlab.invenia.ca/invenia/Datafeeds/S3DBConverter) and we want to be sure to **not** make any modification.
+DataClient simply "plugs in" and reads what is available.
+Data within `FFS` stores on the other hand, are inserted using DataClient itself, where DataClient's native storage implementation applies, therefore both reads and writes are supported (provided that the caller has the appropriate IAM access).
+
 ## Gathering Datasets
-When gathering a dataset, the `collection` and `dataset` must be specified, but `store_id` is optional.
-When `store_id` is not specified, the order from `get_backend()` is used to iteratively search through all available stores until the first store containing the requested `collection.dataset` is found (notice that `get_backend()` returns an `OrderedDict`).
+
+When [`gather`](@ref)ing a dataset, the `collection` and `dataset` must be specified, but `store_id` is optional.
+When `store_id` is not specified, the order from [`get_backend`](@ref) is used to iteratively search through all available stores until the first store containing the requested `collection` and `dataset` is found (notice that `get_backend()` returns an `OrderedDict`).
 See [Configs and Backend](@ref) for more information about how the search order is determined.
+It is **always recommended** to provide a `store_id` for better performance and to avoid ambiguity.
+
 ```julia
 julia> using DataClient
 julia> using TimeZones
 
-# Iterates through all available backend stores until data is found.
-julia> df = gather(
-    "spp",
-    "realtime_price",
-    ZonedDateTime(2020, 2, 13, tz"UTC"),
-    ZonedDateTime(2020, 2, 13, 23, tz"UTC"),
-)
+julia> start = ZonedDateTime(2020, 2, 13, tz"UTC")
+julia> stop = ZonedDateTime(2020, 2, 13, 23, tz"UTC")
+
+# Iterates through all available backend stores until the dataset is found.
+# In this case, the "datafeeds" store is used.
+julia> df = gather("spp", "realtime_price", start, stop)
 71496×9 DataFrame
 
-# Specifically checks the 'datafeeds' backend store for the target data.
-julia> df = gather(
-    "spp",
-    "realtime_price",
-    ZonedDateTime(2020, 2, 13, tz"UTC"),
-    ZonedDateTime(2020, 2, 13, 23, tz"UTC"),
-    "datafeeds",
-)
+# Specifically queries the 'datafeeds-arrow' backend store.
+julia> df = gather("spp", "realtime_price", start, stop, "datafeeds-arrow")
 71496×9 DataFrame
 ```
 
+### Dataset Metadata
+
+The `DataFrame` returned by [`gather`](@ref) contains `S3DB` (or `FFS`) metadata attached to it, which can be accessed via the Tables.jl metadata interface.
+```julia
+meta = metadata(df)["metadata"]
+spp-realtime_price
+  store    : DataClient.S3DB("invenia-datafeeds-output", "version5/arrow/zst_lv22/day/", ...
+  timezone : tz"America/Chicago"
+  meta     :
+             "type_map"  =>
+               "mlc"           => "float"
+               "target_end"    => "int"
+               "tag"           => "str"
+               "lmp"           => "float"
+               "mcc"           => "float"
+               "release_date"  => "int"
+               "target_bounds" => "int"
+               "target_start"  => "int"
+               "node_name"     => "str"
+             "superkey"  => Any["release_date", "target_start", "target_end", "node_name", "tag"]
+             "value_key" => Any["lmp", "mlc", "mcc"]
+             "tags"      =>
+               "real_time_month"   =>
+                 "time_zone"        => "America/Chicago"
+                 "content_offset"   => 2678400
+                 "content_interval" => 2678400
+                 "publish_offset"   => 1339200
+                 ...
+```
+
+### Caching
+More info can be found in the [`gather`](@ref) docs but by default, an ephemeral file cache is automatically instantiated for each Julia session to cache downloaded S3 files.
+This cache can be configured differently via a config file or environment variable.
+    * `DATACLIENT_CACHE_DIR` (String): The path to a local directory that is used as the cache. Files cached here will be persistent (not removed at the end of the julia session) and can be reused across sessions.
+    * `DATACLIENT_CACHE_SIZE_MB` (Int):  The max cache size in MB before older files are removed. The default is 20,000 MB.
+    * `DATACLIENT_CACHE_EXPIRE_AFTER_DAYS` (Int): Files in the custom cache dir (if specified) that are older than this period will be removed during initialization. The default is 90 days.
+    * `DATACLIENT_CACHE_DECOMPRESS` (Bool):  Whether or not to decompress S3 files before caching. THe default is `true`.
+
+The recommended way of configuring the above is by creating a config file in your project directory, this makes your configs persistent and gives you easy view/modify to them (see [Configs and Backend](@ref) for more information):
+```sh
+cat > configs.yaml <<- EOF
+DATACLIENT_CACHE_DIR: "./cache/"
+DATACLIENT_CACHE_SIZE_MB: 50000
+EOF
+```
+
+Using environment variables via the shell is also possible and will override any config file variables if there is a conflict:
+```sh
+export DATACLIENT_CACHE_DIR="./cache/"
+export DATACLIENT_CACHE_SIZE_MB=50000
+```
+
+If setting environment variables in Julia, **be sure to set them before calling the `gather` function.** because that is when the cache is initialized.
+DataClient supports reloading configs (eg. used in [`reload_backend`](@ref)), but re-initializing the cache is not currently supported.
+```julia
+ENV["DATACLIENT_CACHE_DIR"] = "./cache/"
+ENV["DATACLIENT_CACHE_SIZE_MB"] = 50000
+```
+
+### Timezone-naive Queries
+While all stored datasets contain tz-aware data (a current requirement when storing datasets), queries using a tz-naive `Date` (for 24-hrs of data) and a pair of `DateTime`s (start and end) are also supported (for compatibility with certain projects).
+This is simply for convenience, the relevant market's timezone (defined as a constant) will be attached to the tz-naive `DateTime` to form a `ZonedDateTime` internally before the query runs.
+This will fail if the input `DateTime` is an ambiguous or non-existent datetime (due to DST transitions) for the relevant timezone.
+
+```julia
+julia> using Dates
+
+julia> start = DateTime(2020, 2, 13)
+julia> stop = DateTime(2020, 2, 13, 23)
+julia> df = gather("spp", "realtime_price", start, stop, "datafeeds-arrow")
+julia> eltype(df.target_start)
+DateTime
+
+julia> date = Date(2020, 2, 13)
+julia> df = gather("spp", "realtime_price", date, "datafeeds-arrow")
+julia> eltype(df.target_start)
+DateTime
+```
+
+Notice that the datetime columns in the resulting `DataFrame` also has its timezone stripped.
+Note that **the datetimes were NOT converted into UTC before the timezone was stripped.**
+To retain the timezones in the resulting data, a `strip_tz=false` argument must be specified.
+
+```julia
+julia> df = gather("spp", "realtime_price", start, stop, "datafeeds-arrow"; strip_tz=false)
+julia> eltype(df.target_start)
+ZonedDateTime
+```
+
+Using tz-naive `DateTime`s should generally be avoided because it is bad practice to represent non-UTC datetimes using a `DateTime`.
+There is no performance benefit too in this case as is it simply supported for compatibility reasons with certain projects.
+
 ## Inserting Datasets
-The insert operation is only supported for [`DataClient.FFS`](@ref)-type stores.
-The current implementation of `DataClient.FFS` requires that the input `DataFrame` contain a `target_start` column of type `ZonedDateTime`.
+
+The [`insert`](@ref) operation is only supported for [`DataClient.FFS`](@ref)-type stores.
+In this example, we'll store datasets in a custom `FFS` store (not one of the default centralized ones).
+This requires the store to be defined in the config file.
+
+```sh
+cat > configs.yaml <<- EOF
+additional-stores:
+  - tim-personal: ffs:s3://tim-test-only/data-client-demo/
+EOF
+```
+
+#### Note About Indexing
+When storing a dataset, a column in the input `DataFrame` must be available for use as the dataset index.
+Currently, the only available index type is the [`TimeSeriesIndex`](@ref) which **requires that the indexed column be of type `ZonedDateTime`.**
+If no index is specified, the index defaults to `TimeSeriesIndex("target_start", DAY)`, which will error if such a column doesn't exist or is not a `ZonedDateTime`.
+Experiments show that for most of our query patterns and use-cases, sticking to a `DAY` partition yields the best overall performance.
+See [`DataClient.PartitionSize`](@ref) for supported partition sizes.
+
 ```julia
 julia> using DataClient
 julia> using DataFrames
 julia> using TimeZones
 
-# We have 2 registered stores:
-julia> get_backend()
-OrderedCollections.OrderedDict{String, DataClient.Store} with 2 entries:
-  "datafeeds"    => S3DB("invenia-datafeeds-output", "version5/aurora/gz/")
-  "tim-personal" => FFS("tim-buck", "test-insert/")
+# Read in from our config file
+julia> store_id = "tim-personal"
+julia> get_backend()[store_id]
+DataClient.FFS("tim-test-only", "data-client-demo/")
 
-# The FFS store is currently empty:
-julia> list_datasets("tim-personal")
+# The store is currently empty
+julia> list_datasets(store_id)
 Dict{String, Vector{String}}()
 
-# Create a new dataset:
-julia> new_dataset = DataFrame(
-    target_start=[
-        ZonedDateTime(2020, 1, 1, 1, tz"America/New_York"),
-        ZonedDateTime(2020, 1, 1, 2, tz"America/New_York"),
-        ZonedDateTime(2020, 1, 1, 3, tz"America/New_York"),
-    ],
-    lmp=[11.1, 11.2, 11.3]
+# Generate a new dataset
+# For convenience, we'll retrieve a dataset from DataFeeds
+julia> df = gather(
+    "spp",
+    "realtime_price",
+    ZonedDateTime(2020, 1, 1, tz"UTC"),
+    ZonedDateTime(2020, 2, 1, tz"UTC"),
+    "datafeeds-arrow",
+)
+2219301×9 DataFrame
+julia> df_col_types = Dict(names(df) .=> eltype.(eachcol(df)))
+Dict{String, DataType} with 9 entries:
+  "mlc"           => Float64
+  "target_end"    => ZonedDateTime
+  "tag"           => String
+  "lmp"           => Float64
+  "mcc"           => Float64
+  "release_date"  => ZonedDateTime
+  "target_bounds" => String3
+  "target_start"  => ZonedDateTime
+  "node_name"     => String
+
+# Now insert the dataset
+julia> insert(
+    "my-collection",
+    "my-dataset",
+    df,
+    store_id;
+    details=Dict("description" => "Copied over from datafeeds"),
+    column_types=Dict("tag" => Union{Missing, String}),
+    index=TimeSeriesIndex("target_start", DAY),
+    file_format=FileFormats.ARROW,
+    compression=FileFormats.ZST,
 )
 
-# Insert the dataset:
-julia> insert("my-collection", "my-dataset", new_dataset, "tim-personal")
-
 # A new dataset now exists:
-julia> list_datasets("tim-personal")
+julia> list_datasets(store_id)
 Dict{String, Vector{String}} with 1 entry:
   "my-collection" => ["my-dataset"]
 
-# Retrieve the dataset:
-julia> df = gather(
+# Retrieve a portion of the dataset:
+julia> df_new = gather(
     "my-collection",
     "my-dataset",
-    ZonedDateTime(2020, 1, 1, 1, tz"America/New_York"),
-    ZonedDateTime(2020, 1, 1, 3, tz"America/New_York"),
-    "tim-personal",
+    ZonedDateTime(2020, 1, 12, tz"UTC"),
+    ZonedDateTime(2020, 1, 17, tz"UTC"),
+    store_id,
 )
-3×2 DataFrame
- Row │ target_start               lmp     
-     │ ZonedDateTi…               Float64 
-─────┼────────────────────────────────────
-   1 │ 2020-01-01T01:00:00-05:00     11.1
-   2 │ 2020-01-01T02:00:00-05:00     11.2
-   3 │ 2020-01-01T03:00:00-05:00     11.3
+360459×9 DataFrame
+
+# Inspect the dataset metadata
+julia> meta = metadata(df_new)["metadata"]
+my-collection-my-dataset
+  store         : DataClient.FFS("tim-test-only", "data-client-demo/")
+  column_order  : ["release_date", "target_start", "target_end", "target_bounds", "node_name", "tag", "lmp", "mlc", "mcc"]
+  timezone      : tz"America/Chicago"
+  index         : TimeSeriesIndex("target_start", DAY)
+  file_format   : ARROW
+  compression   : ZST
+  last_modified : ZonedDateTime(2022, 12, 1, 15, 33, 41, tz"UTC")
+  column_types  :
+                  "mlc"           => AbstractFloat
+                  "target_end"    => ZonedDateTime
+                  "tag"           => Union{Missing, String}
+                  "lmp"           => AbstractFloat
+                  "mcc"           => AbstractFloat
+                  "release_date"  => ZonedDateTime
+                  "target_bounds" => AbstractString
+                  "target_start"  => ZonedDateTime
+                  "node_name"     => AbstractString
+  details       :
+                  "description" => "Copied over from datafeeds"
 ```
-When creating a new dataset, a type map for the dataset columns is automatically generated based on the input `DataFrame` and stored alongside the dataset metadata.
-This type map is used to validate `DataFrame`s in future insertions of new data into the dataset.
-The `column_types` keyword argument can be used to overwrite the default generated types.
+A few things to note here are:
+    * File format options: [`FileFormats.FileFormat`](@ref)
+    * Compression options: [`FileFormats.Compression`](@ref)
+    * When creating a new dataset, a type map for the dataset columns is automatically generated based on the input `DataFrame` which will be registered in the backend. This type map is used to validate future insertions of new data into the dataset. The `column_types` keyword argument can be used to overwrite the default generated types, which can be used to tighten or loosen the data type restriction for future insertions.
+
 Refer to the [`insert`](@ref) function docs for more in-depth documentation.
-```
-julia> new_dataframe = DataFrame(
-    target_start=[
-        ZonedDateTime(2020, 1, 1, 1, tz"America/New_York"),
-        ZonedDateTime(2020, 1, 1, 2, tz"America/New_York"),
-        ZonedDateTime(2020, 1, 1, 3, tz"America/New_York"),
-    ],
-    string_col=["a", "b", "c"],
-    int_col=[11, 13, 15],
-)
-
-# By default, the automatically generated type map will be:
-# Dict(
-#     "target_start" => ZonedDateTime,
-#     "string_col" => AbstractString,
-#     "int_col" => Integer,
-# )
-
-# We can modify these by specifying user-defined types to allow more or less
-# flexibility for future insertion of new data into the dataset. For example,
-# the following locks 'int_col' to `Int64` only and allows `missing`s in 'string_col'
-julia> col_types = Dict(
-    "string_col" => Union{Missing,AbstractString},
-    "int_col" => Int64,
-)
-
-julia> insert(
-    "new-collection",
-    "new-dataset",
-    new_dataframe,
-    "my-store-id";
-    details=Dict("Description"=>"My insert demo."),
-    column_types=col_types,
-)
-
-# Note that modifying the stored type map of an existing dataset is not supported.
-# So, this can only be done when inserting data to a new dataset for the first time.
-```

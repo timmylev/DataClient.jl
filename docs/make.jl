@@ -9,8 +9,6 @@ makedocs(;
             "Getting Started" => "man/getting-started.md",
             "Configs and Backend" => "man/configs.md",
             "Demos" => "man/demos.md",
-            "Gotchas" => "man/gotchas.md",
-            "Developer Notes" => "man/developer-notes.md",
         ],
         "API" => "api/api.md",
     ],

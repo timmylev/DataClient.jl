@@ -1,45 +1,20 @@
 # API
 
-## API Index
-
-```@index
-Pages = ["api.md"]
-```
-
 ## Public API
 
 Refer to [Getting Started](@ref) in the Manual section for Public API code examples.
 
-### List
-
 ```@docs
 list_datasets
-```
-
-### Gather
-
-```@docs
 gather
-```
-
-### Insert
-
-```@docs
 insert
-```
-
-### Backends and Configs
-
-Refer to [Configs and Backend](@ref) in the manual for more info about config files and backend stores.
-
-```@docs
 get_backend
 reload_backend
 ```
 
 ## Developer API
 
-### Store and StoreMetadata Types
+### Store and Metadata Types
 
 ```@docs
 DataClient.Store
@@ -60,7 +35,7 @@ DataClient.TimeSeriesIndex
 DataClient.PartitionSize
 ```
 
-## Storage Format
+### Storage Format
 ```@docs
 DataClient.FileFormats.FileFormat
 DataClient.FileFormats.Compression
