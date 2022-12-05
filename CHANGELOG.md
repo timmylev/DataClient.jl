@@ -1,5 +1,12 @@
 # Changelog
 
+## BugFix 1.13.3
+
+### Features
+* Fixes an error when using a custom index column name 
+ [!20](https://gitlab.invenia.ca/invenia/Datafeeds/DataClient.jl/-/merge_requests/20)
+
+
 ## Version 1.13.0
 
 ### Features

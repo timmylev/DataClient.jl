@@ -320,7 +320,8 @@ function _ensure_created(
             end
         end
 
-        df_tz = dataframe.target_start[1].timezone
+        df_tz =
+            isa(index, TimeSeriesIndex) ? first(dataframe[!, index.key]).timezone : tz"UTC"
 
         to_write = FFSMeta(;
             collection=collection,
