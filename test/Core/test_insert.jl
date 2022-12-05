@@ -162,6 +162,23 @@ using TimeZones
                 end
             end
 
+            @testset "custom index column" begin
+                apply([patched_get, patched_write, patched_now]) do
+                    # use target_end instead of target_start
+                    custom_index = TimeSeriesIndex("target_end", DAY)
+                    evaluated = _ensure_created(
+                        coll,
+                        ds,
+                        test_df,
+                        custom_index,
+                        fmt,
+                        dummy_ffs;
+                        compression=compression,
+                    )
+                    @test evaluated.index.key == "target_end"
+                end
+            end
+
             @testset "invalid user-defined column types" begin
                 apply([patched_get, patched_write, patched_now]) do
                     col_types = merge(column_types, Dict("val_a" => String))
