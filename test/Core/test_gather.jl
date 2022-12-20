@@ -5,6 +5,7 @@ using DataClient:
     MissingDataError,
     S3DB,
     _filter_missing,
+    _gather,
     _load_s3_files,
     _process_dataframe!,
     get_metadata,
@@ -189,8 +190,53 @@ using TimeZones: zdt2unix
         end
     end
 
+    @testset "test _gather sim_now filter" begin
+        store = S3DB("my-bucket", "test-s3db")
+        coll, ds = "miso", "realtime_price"
+        start_dt = ZonedDateTime(2020, 1, 2, 0, tz"UTC-5")
+        end_dt = ZonedDateTime(2020, 1, 2, 23, tz"UTC-5")
+
+        apply(patched_s3_cached_get) do
+            #  w/o sim_now
+            df = _gather(coll, ds, start_dt, end_dt, store)
+            @test Set(df.tag) ==
+                Set(["real_time_dart", "real_time_http_prelim", "real_time_http_final"])
+
+            #  w/ sim_now
+            # release order:
+            #  1. real_time_dart        -> release hourly soon after the hour ends
+            #  2. real_time_http_prelim -> released the day after
+            #  3. real_time_http_final  -> released a few days after
+            sim_now = ZonedDateTime(2020, 1, 7, tz"UTC-5")
+            df = _gather(coll, ds, start_dt, end_dt, store; sim_now=sim_now)
+            @test nrow(filter(:release_date => r -> r > sim_now, df)) == 0
+            @test Set(df.tag) == Set(["real_time_http_final"])
+
+            sim_now = ZonedDateTime(2020, 1, 4, tz"UTC-5")
+            df = _gather(coll, ds, start_dt, end_dt, store; sim_now=sim_now)
+            @test nrow(filter(:release_date => r -> r > sim_now, df)) == 0
+            @test Set(df.tag) == Set(["real_time_http_prelim"])
+
+            sim_now = ZonedDateTime(2020, 1, 3, tz"UTC-5")
+            df = _gather(coll, ds, start_dt, end_dt, store; sim_now=sim_now)
+            @test nrow(filter(:release_date => r -> r > sim_now, df)) == 0
+            @test Set(df.tag) == Set(["real_time_dart"])
+
+            # sim_now is so early that certain rows have no releases yet
+            sim_now = ZonedDateTime(2020, 1, 2, 12, tz"UTC-5")
+            df_trimmed = _gather(coll, ds, start_dt, end_dt, store; sim_now=sim_now)
+            @test nrow(filter(:release_date => r -> r > sim_now, df_trimmed)) == 0
+            @test Set(df_trimmed.tag) == Set(["real_time_dart"])
+            @test nrow(df_trimmed) < nrow(df)  # fewer rows returned
+
+            # sim_now is so early that there are no releases yet
+            df = _gather(coll, ds, start_dt, end_dt, store; sim_now=start_dt)
+            @test nrow(df) == 0
+        end
+    end
+
     @testset "test gather" begin
-        patched_load = @patch function _load_s3_files(args...)
+        patched_load = @patch function _load_s3_files(args...; kwargs...)
             return DataFrame(; target_start=[ZonedDateTime(2020, 1, 1, tz"UTC")])
         end
 
@@ -237,7 +283,7 @@ using TimeZones: zdt2unix
             @test repr(metadata(df, "metadata")) == repr(expected)  # also tests show()
         end
 
-        patched_load = @patch function _load_s3_files(args...)
+        patched_load = @patch function _load_s3_files(args...; kwargs...)
             return DataFrame()
         end
 
