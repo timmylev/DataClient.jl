@@ -20,7 +20,8 @@ using TimeZones: zdt2unix
         dataset::AbstractString,
         start_dt::ZonedDateTime,
         end_dt::ZonedDateTime,
-        store_id::AbstractString,
+        store_id::AbstractString;
+        kwargs...,
     )
         CALLED_WITH["start_dt"] = start_dt
         CALLED_WITH["end_dt"] = end_dt

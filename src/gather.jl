@@ -4,13 +4,19 @@ using TimeZones: zdt2unix
 
 const _GATHER_ASYNC_NTASKS = 8
 
+const _S3DB_RELEASE_COL = :release_date
+const _S3DB_ZDT_COLS = (:target_start, :target_end, _S3DB_RELEASE_COL)
+# do not include these cols when grouping rows to find the latest release
+const _S3DB_NON_ID_COLS = [_S3DB_RELEASE_COL, :tag]
+
 """
     gather(
         collection::AbstractString,
         dataset::AbstractString,
         start_dt::ZonedDateTime,
         end_dt::ZonedDateTime,
-        [store_id::AbstractString,]
+        [store_id::AbstractString,];
+        sim_now::Union{ZonedDateTime,Nothing}=nothing,
     )::DataFrame
 
 Gathers data from a target dataset as a `DataFrame`.
@@ -25,10 +31,16 @@ Gathers data from a target dataset as a `DataFrame`.
     checked in order of precedence until the first store containing the target dataset
     is found. Refer to [Configs and Backend](@ref) for more info about store precedence.
 
+# Keywords
+- `sim_now`: (Optional) When supplied, only the row with the latest `release_date` up to
+    the `sim_now` (cutoff) will be returned for every group of rows with the same id. The
+    id of a row is the primary key of the row minus the `release_date` and `tag`. This
+    is only supported for [`S3DB`](@ref) stores.
+
 !!! note "IMPORTANT"
     The `start_dt` and `end_dt` filters are only applied to the `Index` column of the
-    dataset. For `S3DB`(@ref) datsets, this is always the `target_start` column. For
-    `FFS`(@ref) datasets, it will depend on which column was set as the index when the
+    dataset. For [`S3DB`](@ref) datsets, this is always the `target_start` column. For
+    [`FFS`](@ref) datasets, it will depend on which column was set as the index when the
     dataset was first created. Any "target_end" column (if available) is irrelevant.
 
 ## Cache Configs
@@ -68,14 +80,15 @@ function gather(
     collection::AbstractString,
     dataset::AbstractString,
     start::ZonedDateTime,
-    stop::ZonedDateTime,
+    stop::ZonedDateTime;
+    sim_now::Union{ZonedDateTime,Nothing}=nothing,
 )::DataFrame
     # get_backend() returns an OrderedDict, i.e. the search order in configs.yaml
     for (name, store) in pairs(get_backend())
         data = nothing
 
         try
-            data = _gather(collection, dataset, start, stop, store)
+            data = _gather(collection, dataset, start, stop, store; sim_now=sim_now)
         catch err
             isa(err, MissingDataError) || throw(err)
         end
@@ -93,9 +106,11 @@ function gather(
     dataset::AbstractString,
     start_dt::ZonedDateTime,
     end_dt::ZonedDateTime,
-    store_id::AbstractString,
+    store_id::AbstractString;
+    sim_now::Union{ZonedDateTime,Nothing}=nothing,
 )::DataFrame
-    data = _gather(collection, dataset, start_dt, end_dt, get_backend(store_id))
+    store = get_backend(store_id)
+    data = _gather(collection, dataset, start_dt, end_dt, store; sim_now=sim_now)
 
     return if !isempty(data)
         data
@@ -105,8 +120,17 @@ function gather(
 end
 
 function _gather(
-    collection::AbstractString, dataset::AbstractString, start::T, stop::T, store::S3Store
+    collection::AbstractString,
+    dataset::AbstractString,
+    start::T,
+    stop::T,
+    store::S3Store;
+    sim_now::Union{ZonedDateTime,Nothing}=nothing,
 )::DataFrame where {T}
+    if !isnothing(sim_now) && !isa(store, S3DB)
+        throw(ArgumentError("The `sim_now` arg is only supported for `S3DB` stores."))
+    end
+
     meta = @mock get_metadata(collection, dataset, store)
     ds_name = "'$(meta.collection)-$(meta.dataset)'"
 
@@ -122,7 +146,7 @@ function _gather(
         trace(LOGGER, "Listing $nkeys file keys from $ds_name took $rtime")
     end
 
-    t2 = @elapsed results = @mock _load_s3_files(keys, start, stop, meta)
+    t2 = @elapsed results = @mock _load_s3_files(keys, start, stop, meta; sim_now=sim_now)
     rtime = "($(s_fmt(t2)))"
     debug(LOGGER, "Loading $nkeys files from $ds_name took $rtime")
 
@@ -177,10 +201,14 @@ function _filter_missing(s3_keys::Vector{String}, meta::S3Meta)::Vector{String}
 end
 
 function _load_s3_files(
-    file_keys::Vector{String}, start::T, stop::T, meta::S3Meta
+    file_keys::Vector{String},
+    start::T,
+    stop::T,
+    meta::S3Meta;
+    sim_now::Union{ZonedDateTime,Nothing}=nothing,
 )::DataFrame where {T}
     to = TimerOutput()
-    dfs = Dict{String,DataFrame}()
+    dfs = Dict{String,AbstractDataFrame}()
 
     file_format = get_file_format(meta)
     to_decompress = get(Configs.get_configs(), "DATACLIENT_CACHE_DECOMPRESS", true)
@@ -207,16 +235,22 @@ function _load_s3_files(
 
                     @timeit to "df filter" df = filter_df(df, start, stop, meta; s3_key=key)
 
-                    @timeit to "df xform" _process_dataframe!(df, meta)
+                    if !isnothing(sim_now)
+                        @timeit to "df sim_now" df = _filter_sim_now(df, meta, sim_now)
+                    end
 
-                    dfs[key] = df
+                    if !isempty(df)
+                        dfs[key] = df
+                    end
                 end
             end
         end
     end
 
-    @timeit to "vcat dfs" results = if !isempty(dfs)
-        vcat([dfs[key] for key in sort(collect(keys(dfs)))]...)
+    results = if !isempty(dfs)
+        @timeit to "vcat dfs" df = vcat([dfs[key] for key in sort(collect(keys(dfs)))]...)
+        @timeit to "df xform" _process_dataframe!(df, meta)
+        df
     else
         DataFrame()
     end
@@ -234,10 +268,16 @@ function _load_s3_files(
 end
 
 function _process_dataframe!(df::DataFrame, metadata::S3DBMeta)
+    # a very large proportion of zdts are identical
+    cache = Dict{Int,ZonedDateTime}()
+    cached_unix2zdt(ts::Int)::ZonedDateTime =
+        get!(cache, ts) do
+            unix2zdt(ts, metadata.timezone)
+        end
+
     # convert unix datetimes to zdt
-    zdt_cols = ["target_start", "target_end", "release_date"]
-    for col in zdt_cols
-        df[!, col] = unix2zdt.(df[!, col], metadata.timezone)
+    for col in _S3DB_ZDT_COLS
+        df[!, col] = map(cached_unix2zdt, df[!, col])
     end
 
     # decode 'list' types
@@ -275,4 +315,34 @@ function _process_dataframe!(df::DataFrame, metadata::FFSMeta)
         end
     end
     return nothing
+end
+
+function _filter_sim_now(df::DataFrame, metadata::S3DBMeta, sim_now::ZonedDateTime)
+    sim_now_epoch = zdt2unix(Int, sim_now)
+    s3db_pkeys = Symbol.(metadata.meta["superkey"])
+    unique_keys = setdiff(s3db_pkeys, _S3DB_NON_ID_COLS)
+
+    selections = Vector{Int}()
+    sizehint!(selections, nrow(df))
+
+    # - DataFrame.groupby is very efficient, so use it.
+    # - DataFrames.combine is not ideal for our usecase, so use a custom impementation.
+    for sdf in groupby(df, unique_keys)
+        latest = 0
+        selected = 0
+        for row in eachrow(sdf)
+            rd = row[_S3DB_RELEASE_COL]
+            if rd <= sim_now_epoch && rd > latest
+                latest = rd
+                selected = first(parentindices(row))
+            end
+        end
+        if selected != 0
+            push!(selections, selected)
+        end
+    end
+
+    # There's no point in materializing the selections at this stage because
+    # we'll be running a vcat in the next step
+    return @view df[selections, :]
 end
