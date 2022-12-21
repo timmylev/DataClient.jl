@@ -244,6 +244,12 @@ using TimeZones: zdt2unix
                 @test length(all_tags) == 3  # all expected tags
                 @test length(all_nodes) == 2250  # all expected nodes
 
+                # test empty filter
+                filters = Dict{Symbol,Vector{Any}}()
+                df = _gather(coll, ds, start_dt, end_dt, store; filters=filters)
+                @test Set(df.node_name) == all_nodes
+                @test Set(df.tag) == all_tags
+
                 # create a filter
                 nodes = ["MPW.MPW", "IPL.AZ", "CSWS", "YAD"]
                 filters = Dict(:node_name => nodes)

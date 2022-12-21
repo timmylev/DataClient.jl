@@ -250,7 +250,11 @@ function _load_s3_files(
     to_decompress = get(Configs.get_configs(), "DATACLIENT_CACHE_DECOMPRESS", true)
 
     # additional 'containment' filters
-    df_filter_plus = isnothing(filters) ? nothing : df_filter_factory(filters, filters_in)
+    df_filter_plus = if isnothing(filters) || isempty(filters)
+        nothing
+    else
+        df_filter_factory(filters, filters_in)
+    end
 
     @timeit to "async loop" begin
         asyncmap(file_keys; ntasks=_GATHER_ASYNC_NTASKS) do key
