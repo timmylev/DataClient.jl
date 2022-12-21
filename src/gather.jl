@@ -377,7 +377,6 @@ function _process_dataframe!(df::DataFrame, metadata::FFSMeta)
 end
 
 """
-
     _filter_sim_now(
         df::AbstractDataFrame, metadata::S3DBMeta, sim_now::ZonedDateTime
     )::Vector{Int}
@@ -386,7 +385,7 @@ Filters the input dataframe for the row with the latest `release_date` up to the
 `sim_now` (cutoff) for every group of rows with the same id. The id of a row is the
 primary key of the row minus the `release_date` and `tag`.
 
-Returns the indeces of the selected rows from the original DataFrame (eg. if a
+Returns the indices of the selected rows from the original DataFrame (eg. if a
 SubDataFrame was passed in instead of a DataFrame, the indices will map to the row
 number in the original DataFrame, not the SubDataFrame).
 
@@ -427,9 +426,8 @@ end
 
 # generates a DF filter function given filters as a Dict
 function df_filter_factory(filters::Dict{Symbol,Vector{T}}, filters_in::Bool) where {T}
-    fvec = collect(filters)
-    fkeys = first.(fvec)
-    fvals = Set.(last.(fvec))  # convert to set
+    fkeys = collect(keys(filters))
+    fvals = Set.(values(filters))
     results = Vector{Bool}(undef, length(fkeys))  # pre-allocate results vector
     function fn(args...)
         for (i, el) in enumerate(args)
