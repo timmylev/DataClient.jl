@@ -428,12 +428,11 @@ end
 function df_filter_factory(filters::Dict{Symbol,Vector{T}}, filters_in::Bool) where {T}
     fkeys = collect(keys(filters))
     fvals = Set.(values(filters))
-    results = Vector{Bool}(undef, length(fkeys))  # pre-allocate results vector
     function fn(args...)
         for (i, el) in enumerate(args)
-            results[i] = (el in fvals[i]) == filters_in
+            (el in fvals[i]) == filters_in || return false
         end
-        return all(results)
+        return true
     end
     return fkeys => fn
 end
