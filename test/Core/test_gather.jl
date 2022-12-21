@@ -190,48 +190,109 @@ using TimeZones: zdt2unix
         end
     end
 
-    @testset "test _gather sim_now filter" begin
+    @testset "test _gather filters" begin
         store = S3DB("my-bucket", "test-s3db")
         coll, ds = "miso", "realtime_price"
         start_dt = ZonedDateTime(2020, 1, 2, 0, tz"UTC-5")
         end_dt = ZonedDateTime(2020, 1, 2, 23, tz"UTC-5")
 
         apply(patched_s3_cached_get) do
-            #  w/o sim_now
-            df = _gather(coll, ds, start_dt, end_dt, store)
-            @test Set(df.tag) ==
-                Set(["real_time_dart", "real_time_http_prelim", "real_time_http_final"])
+            @testset "test sim_now" begin
+                #  w/o sim_now
+                df = _gather(coll, ds, start_dt, end_dt, store)
+                @test Set(df.tag) == Set([
+                    "real_time_dart", "real_time_http_prelim", "real_time_http_final"
+                ])
 
-            #  w/ sim_now
-            # release order:
-            #  1. real_time_dart        -> release hourly soon after the hour ends
-            #  2. real_time_http_prelim -> released the day after
-            #  3. real_time_http_final  -> released a few days after
-            sim_now = ZonedDateTime(2020, 1, 7, tz"UTC-5")
-            df = _gather(coll, ds, start_dt, end_dt, store; sim_now=sim_now)
-            @test nrow(filter(:release_date => r -> r > sim_now, df)) == 0
-            @test Set(df.tag) == Set(["real_time_http_final"])
+                #  w/ sim_now
+                # release order:
+                #  1. real_time_dart        -> release hourly soon after the hour ends
+                #  2. real_time_http_prelim -> released the day after
+                #  3. real_time_http_final  -> released a few days after
+                sim_now = ZonedDateTime(2020, 1, 7, tz"UTC-5")
+                df = _gather(coll, ds, start_dt, end_dt, store; sim_now=sim_now)
+                @test nrow(filter(:release_date => r -> r > sim_now, df)) == 0
+                @test Set(df.tag) == Set(["real_time_http_final"])
 
-            sim_now = ZonedDateTime(2020, 1, 4, tz"UTC-5")
-            df = _gather(coll, ds, start_dt, end_dt, store; sim_now=sim_now)
-            @test nrow(filter(:release_date => r -> r > sim_now, df)) == 0
-            @test Set(df.tag) == Set(["real_time_http_prelim"])
+                sim_now = ZonedDateTime(2020, 1, 4, tz"UTC-5")
+                df = _gather(coll, ds, start_dt, end_dt, store; sim_now=sim_now)
+                @test nrow(filter(:release_date => r -> r > sim_now, df)) == 0
+                @test Set(df.tag) == Set(["real_time_http_prelim"])
 
-            sim_now = ZonedDateTime(2020, 1, 3, tz"UTC-5")
-            df = _gather(coll, ds, start_dt, end_dt, store; sim_now=sim_now)
-            @test nrow(filter(:release_date => r -> r > sim_now, df)) == 0
-            @test Set(df.tag) == Set(["real_time_dart"])
+                sim_now = ZonedDateTime(2020, 1, 3, tz"UTC-5")
+                df = _gather(coll, ds, start_dt, end_dt, store; sim_now=sim_now)
+                @test nrow(filter(:release_date => r -> r > sim_now, df)) == 0
+                @test Set(df.tag) == Set(["real_time_dart"])
 
-            # sim_now is so early that certain rows have no releases yet
-            sim_now = ZonedDateTime(2020, 1, 2, 12, tz"UTC-5")
-            df_trimmed = _gather(coll, ds, start_dt, end_dt, store; sim_now=sim_now)
-            @test nrow(filter(:release_date => r -> r > sim_now, df_trimmed)) == 0
-            @test Set(df_trimmed.tag) == Set(["real_time_dart"])
-            @test nrow(df_trimmed) < nrow(df)  # fewer rows returned
+                # sim_now is so early that certain rows have no releases yet
+                sim_now = ZonedDateTime(2020, 1, 2, 12, tz"UTC-5")
+                df_trimmed = _gather(coll, ds, start_dt, end_dt, store; sim_now=sim_now)
+                @test nrow(filter(:release_date => r -> r > sim_now, df_trimmed)) == 0
+                @test Set(df_trimmed.tag) == Set(["real_time_dart"])
+                @test nrow(df_trimmed) < nrow(df)  # fewer rows returned
 
-            # sim_now is so early that there are no releases yet
-            df = _gather(coll, ds, start_dt, end_dt, store; sim_now=start_dt)
-            @test nrow(df) == 0
+                # sim_now is so early that there are no releases yet
+                df = _gather(coll, ds, start_dt, end_dt, store; sim_now=start_dt)
+                @test nrow(df) == 0
+            end
+
+            @testset "test nodes" begin
+                #  w/o nodes filter
+                df = _gather(coll, ds, start_dt, end_dt, store)
+                all_nodes = Set(df.node_name)
+                all_tags = Set(df.tag)
+                @test length(all_tags) == 3  # all expected tags
+                @test length(all_nodes) == 2250  # all expected nodes
+
+                # create a filter
+                nodes = ["MPW.MPW", "IPL.AZ", "CSWS", "YAD"]
+                filters = Dict(:node_name => nodes)
+
+                # filter-IN a few nodes 
+                df = _gather(coll, ds, start_dt, end_dt, store; filters=filters)
+                @test Set(df.node_name) == Set(nodes)
+
+                # filter-OUT a few nodes
+                df = _gather(
+                    coll, ds, start_dt, end_dt, store; filters=filters, filters_in=false
+                )
+                @test Set(df.node_name) == setdiff(all_nodes, Set(nodes))
+
+                # Multiple filters
+                tags = ["real_time_dart", "real_time_http_prelim"]
+                filters = Dict(:node_name => nodes, :tag => tags)
+                df = _gather(coll, ds, start_dt, end_dt, store; filters=filters)
+                @test Set(df.node_name) == Set(nodes)
+                @test Set(df.tag) == Set(tags)
+            end
+
+            # test that both the sim_now and nodes filters work together,
+            # i.e. combines both of the tests above
+            @testset "test sim_now + nodes" begin
+                # Our test filters
+                nodes = ["MPW.MPW", "IPL.AZ", "CSWS", "YAD"]
+                filters = Dict(:node_name => nodes)
+                sim_now = ZonedDateTime(2020, 1, 4, tz"UTC-5")
+
+                # First, w/o filters
+                df = _gather(coll, ds, start_dt, end_dt, store)
+                all_tags = Set(df.tag)
+                all_nodes = Set(df.node_name)
+                @test length(all_tags) == 3  # no sim_now filtering
+                @test maximum(df.release_date) > sim_now  # no sim_now filtering
+                @test length(all_nodes) == 2250  # no nodes filtering
+
+                # Now, apply filters
+                df = _gather(
+                    coll, ds, start_dt, end_dt, store; sim_now=sim_now, filters=filters
+                )
+                # releases are filtered, we've also structured the test such that only 1
+                # tag remains, i.e. the 2nd release out of 3 available releases.
+                @test maximum(df.release_date) <= sim_now
+                @test Set(df.tag) == Set(["real_time_http_prelim"])
+                # nodes are also filtered
+                @test Set(df.node_name) == Set(nodes)
+            end
         end
     end
 
