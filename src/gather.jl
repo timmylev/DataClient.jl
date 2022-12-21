@@ -17,7 +17,9 @@ const _S3DB_NON_ID_COLS = [_S3DB_RELEASE_COL, :tag]
         end_dt::ZonedDateTime,
         [store_id::AbstractString,];
         sim_now::Union{ZonedDateTime,Nothing}=nothing,
-    )::DataFrame
+        filters::Union{Nothing,Dict{Symbol,Vector{P}}}=nothing,
+        filters_in::Bool=true,
+    )::DataFrame where {P}
 
 Gathers data from a target dataset as a `DataFrame`.
 
@@ -36,6 +38,12 @@ Gathers data from a target dataset as a `DataFrame`.
     the `sim_now` (cutoff) will be returned for every group of rows with the same id. The
     id of a row is the primary key of the row minus the `release_date` and `tag`. This
     is only supported for [`S3DB`](@ref) stores.
+- `filters`: (Optional) Additional column-wise containment filters to apply to the gather
+    query. This filter is run before the `sim_now` filter if both are provided, which may
+    boost overall query performance when compared to just using `sim_now` alone.
+- `filters_in`: (Optional) Determines whether to filter-IN or to filter-OUT rows with
+    column values that match the supplied `filters`. This is only relevant when the
+    `filters` kwarg is supplied and it defaults to `true`.
 
 !!! note "IMPORTANT"
     The `start_dt` and `end_dt` filters are only applied to the `Index` column of the
@@ -82,13 +90,24 @@ function gather(
     start::ZonedDateTime,
     stop::ZonedDateTime;
     sim_now::Union{ZonedDateTime,Nothing}=nothing,
-)::DataFrame
+    filters::Union{Nothing,Dict{Symbol,Vector{P}}}=nothing,
+    filters_in::Bool=true,
+)::DataFrame where {P}
     # get_backend() returns an OrderedDict, i.e. the search order in configs.yaml
     for (name, store) in pairs(get_backend())
         data = nothing
 
         try
-            data = _gather(collection, dataset, start, stop, store; sim_now=sim_now)
+            data = _gather(
+                collection,
+                dataset,
+                start,
+                stop,
+                store;
+                sim_now=sim_now,
+                filters=filters,
+                filters_in=filters_in,
+            )
         catch err
             isa(err, MissingDataError) || throw(err)
         end
@@ -108,9 +127,20 @@ function gather(
     end_dt::ZonedDateTime,
     store_id::AbstractString;
     sim_now::Union{ZonedDateTime,Nothing}=nothing,
-)::DataFrame
+    filters::Union{Nothing,Dict{Symbol,Vector{P}}}=nothing,
+    filters_in::Bool=true,
+)::DataFrame where {P}
     store = get_backend(store_id)
-    data = _gather(collection, dataset, start_dt, end_dt, store; sim_now=sim_now)
+    data = _gather(
+        collection,
+        dataset,
+        start_dt,
+        end_dt,
+        store;
+        sim_now=sim_now,
+        filters=filters,
+        filters_in=filters_in,
+    )
 
     return if !isempty(data)
         data
@@ -126,7 +156,9 @@ function _gather(
     stop::T,
     store::S3Store;
     sim_now::Union{ZonedDateTime,Nothing}=nothing,
-)::DataFrame where {T}
+    filters::Union{Nothing,Dict{Symbol,Vector{P}}}=nothing,
+    filters_in::Bool=true,
+)::DataFrame where {T,P}
     if !isnothing(sim_now) && !isa(store, S3DB)
         throw(ArgumentError("The `sim_now` arg is only supported for `S3DB` stores."))
     end
@@ -146,7 +178,9 @@ function _gather(
         trace(LOGGER, "Listing $nkeys file keys from $ds_name took $rtime")
     end
 
-    t2 = @elapsed results = @mock _load_s3_files(keys, start, stop, meta; sim_now=sim_now)
+    t2 = @elapsed results = @mock _load_s3_files(
+        keys, start, stop, meta; sim_now=sim_now, filters=filters, filters_in=filters_in
+    )
     rtime = "($(s_fmt(t2)))"
     debug(LOGGER, "Loading $nkeys files from $ds_name took $rtime")
 
@@ -206,12 +240,17 @@ function _load_s3_files(
     stop::T,
     meta::S3Meta;
     sim_now::Union{ZonedDateTime,Nothing}=nothing,
-)::DataFrame where {T}
+    filters::Union{Nothing,Dict{Symbol,Vector{P}}}=nothing,
+    filters_in::Bool=true,
+)::DataFrame where {T,P}
     to = TimerOutput()
     dfs = Dict{String,AbstractDataFrame}()
 
     file_format = get_file_format(meta)
     to_decompress = get(Configs.get_configs(), "DATACLIENT_CACHE_DECOMPRESS", true)
+
+    # additional 'containment' filters
+    df_filter_plus = isnothing(filters) ? nothing : df_filter_factory(filters, filters_in)
 
     @timeit to "async loop" begin
         asyncmap(file_keys; ntasks=_GATHER_ASYNC_NTASKS) do key
@@ -233,9 +272,16 @@ function _load_s3_files(
 
                     @timeit to "df load" df = load_df(file_path, file_format, compression)
 
+                    # The index filter. Typically, this will only run on the first and last file
                     @timeit to "df filter" df = filter_df(df, start, stop, meta; s3_key=key)
 
-                    if !isnothing(sim_now)
+                    # additional 'containment' filters
+                    if !isempty(df) && !isnothing(df_filter_plus)
+                        @timeit to "df filter_plus" df = filter(df_filter_plus, df)
+                    end
+
+                    # sim_now filter
+                    if !isempty(df) && !isnothing(sim_now)
                         @timeit to "df sim_now" df = _filter_sim_now(df, meta, sim_now)
                     end
 
@@ -345,4 +391,19 @@ function _filter_sim_now(df::DataFrame, metadata::S3DBMeta, sim_now::ZonedDateTi
     # There's no point in materializing the selections at this stage because
     # we'll be running a vcat in the next step
     return @view df[selections, :]
+end
+
+# generates a DF filter function given filters as a Dict
+function df_filter_factory(filters::Dict{Symbol,Vector{T}}, filters_in::Bool) where {T}
+    fvec = collect(filters)
+    fkeys = first.(fvec)
+    fvals = Set.(last.(fvec))  # convert to set
+    results = Vector{Bool}(undef, length(fkeys))  # pre-allocate results vector
+    function fn(args...)
+        for (i, el) in enumerate(args)
+            results[i] = (el in fvals[i]) == filters_in
+        end
+        return all(results)
+    end
+    return fkeys => fn
 end
