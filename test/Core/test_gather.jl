@@ -197,7 +197,7 @@ using TimeZones: zdt2unix
         end_dt = ZonedDateTime(2020, 1, 2, 23, tz"UTC-5")
 
         apply(patched_s3_cached_get) do
-            @testset "test sim_now" begin
+            @testset "test sim_now filter" begin
                 #  w/o sim_now
                 df = _gather(coll, ds, start_dt, end_dt, store)
                 @test Set(df.tag) == Set([
@@ -236,7 +236,7 @@ using TimeZones: zdt2unix
                 @test nrow(df) == 0
             end
 
-            @testset "test nodes" begin
+            @testset "test containment/exclusion filters" begin
                 #  w/o nodes filter
                 df = _gather(coll, ds, start_dt, end_dt, store)
                 all_nodes = Set(df.node_name)
@@ -259,22 +259,36 @@ using TimeZones: zdt2unix
                 @test Set(df.node_name) == Set(nodes)
 
                 # filter-OUT a few nodes
-                df = _gather(
-                    coll, ds, start_dt, end_dt, store; filters=filters, filters_in=false
-                )
+                df = _gather(coll, ds, start_dt, end_dt, store; excludes=filters)
                 @test Set(df.node_name) == setdiff(all_nodes, Set(nodes))
 
-                # Multiple filters
+                # Multiple keys in same filter
                 tags = ["real_time_dart", "real_time_http_prelim"]
                 filters = Dict(:node_name => nodes, :tag => tags)
                 df = _gather(coll, ds, start_dt, end_dt, store; filters=filters)
                 @test Set(df.node_name) == Set(nodes)
                 @test Set(df.tag) == Set(tags)
+
+                # filters + excludes
+                filters = Dict(:node_name => nodes)
+                excludes = Dict(:tag => tags)
+                df = _gather(
+                    coll, ds, start_dt, end_dt, store; filters=filters, excludes=excludes
+                )
+                @test Set(df.node_name) == Set(nodes)
+                @test isdisjoint(Set(df.tag), Set(tags))
+
+                # `filters` and `excludes` overlapping keys error
+                @test_throws ArgumentError(
+                    "The `filters` and `excludes` keys must not overlap"
+                ) _gather(
+                    coll, ds, start_dt, end_dt, store; filters=filters, excludes=filters
+                )
             end
 
             # test that both the sim_now and nodes filters work together,
             # i.e. combines both of the tests above
-            @testset "test sim_now + nodes" begin
+            @testset "test all filters together" begin
                 # Our test filters
                 nodes = ["MPW.MPW", "IPL.AZ", "CSWS", "YAD"]
                 filters = Dict(:node_name => nodes)

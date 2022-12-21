@@ -5,16 +5,16 @@
         start_dt::DateTime,
         end_dt::DateTime,
         store_id::AbstractString;
-        sim_now::Union{ZonedDateTime,Nothing}=nothing,
         strip_tz::Bool=true,
+        kwargs...
     )::DataFrame
     gather(
         collection::AbstractString,
         dataset::AbstractString,
         date::Date,
         store_id::AbstractString;
-        sim_now::Union{ZonedDateTime,Nothing}=nothing,
         strip_tz::Bool=true,
+        kwargs...
     )::DataFrame
 
 A convenient way to gather datasets using tz-naive `DateTime`s or `Date` instead of
@@ -33,23 +33,13 @@ function gather(
     dataset::AbstractString,
     date::Date,
     store_id::AbstractString;
-    sim_now::Union{ZonedDateTime,Nothing}=nothing,
-    filters::Union{Nothing,Dict{Symbol,Vector{T}}}=nothing,
-    filters_in::Bool=true,
     strip_tz::Bool=true,
-)::DataFrame where {T}
+    kwargs...,
+)::DataFrame
     start_dt = DateTime(date)
     end_dt = start_dt + Day(1) - Second(1)
     return gather(
-        collection,
-        dataset,
-        start_dt,
-        end_dt,
-        store_id;
-        sim_now=sim_now,
-        filters=filters,
-        filters_in=filters_in,
-        strip_tz=strip_tz,
+        collection, dataset, start_dt, end_dt, store_id; strip_tz=strip_tz, kwargs...
     )
 end
 
@@ -59,11 +49,9 @@ function gather(
     start_dt::DateTime,
     end_dt::DateTime,
     store_id::AbstractString;
-    sim_now::Union{ZonedDateTime,Nothing}=nothing,
-    filters::Union{Nothing,Dict{Symbol,Vector{T}}}=nothing,
-    filters_in::Bool=true,
     strip_tz::Bool=true,
-)::DataFrame where {T}
+    kwargs...,
+)::DataFrame
     store = get_backend(store_id)
 
     metadata = @mock get_metadata(collection, dataset, store)
@@ -72,16 +60,7 @@ function gather(
     start_zdt = ZonedDateTime(start_dt, tz)
     end_zdt = ZonedDateTime(end_dt, tz)
 
-    df = @mock gather(
-        collection,
-        dataset,
-        start_zdt,
-        end_zdt,
-        store_id;
-        sim_now=sim_now,
-        filters=filters,
-        filters_in=filters_in,
-    )
+    df = @mock gather(collection, dataset, start_zdt, end_zdt, store_id; kwargs...)
 
     if strip_tz
         zdt_cols = _get_zdt_cols(metadata)
