@@ -276,17 +276,26 @@ function _load_s3_files(
                     @timeit to "df filter" df = filter_df(df, start, stop, meta; s3_key=key)
 
                     # additional 'containment' filters
-                    if !isempty(df) && !isnothing(df_filter_plus)
-                        @timeit to "df filter_plus" df = filter(df_filter_plus, df)
+                    sdf = if !isempty(df) && !isnothing(df_filter_plus)
+                        @timeit to "df filter_plus" filter(df_filter_plus, df; view=true)
+                    else
+                        df
                     end
 
                     # sim_now filter
-                    if !isempty(df) && !isnothing(sim_now)
-                        @timeit to "df sim_now" df = _filter_sim_now(df, meta, sim_now)
+                    if !isempty(sdf) && !isnothing(sim_now)
+                        # note that if sdf is a SubDataFrame, this returns the row number
+                        # in the original DataFrame.
+                        @timeit to "df sim_now" selections = _filter_sim_now(
+                            sdf, meta, sim_now
+                        )
+                        # Extract the selections as a view from the original dataframe
+                        sdf = @view df[selections, :]
                     end
 
                     if !isempty(df)
-                        dfs[key] = df
+                        # sdf may be a view, we'll be running a vcat later so this is fine.
+                        dfs[key] = sdf
                     end
                 end
             end
@@ -363,7 +372,28 @@ function _process_dataframe!(df::DataFrame, metadata::FFSMeta)
     return nothing
 end
 
-function _filter_sim_now(df::DataFrame, metadata::S3DBMeta, sim_now::ZonedDateTime)
+"""
+
+    _filter_sim_now(
+        df::AbstractDataFrame, metadata::S3DBMeta, sim_now::ZonedDateTime
+    )::Vector{Int}
+
+Filters the input dataframe for the row with the latest `release_date` up to the
+`sim_now` (cutoff) for every group of rows with the same id. The id of a row is the
+primary key of the row minus the `release_date` and `tag`.
+
+Returns the indeces of the selected rows from the original DataFrame (eg. if a
+SubDataFrame was passed in instead of a DataFrame, the indices will map to the row
+number in the original DataFrame, not the SubDataFrame).
+
+# Arguments
+- `df`: The dataframe to filter
+- `metadata`: The S3DB metadata, contains pkey information
+- `sim_now`: The sim_now filter
+"""
+function _filter_sim_now(
+    df::AbstractDataFrame, metadata::S3DBMeta, sim_now::ZonedDateTime
+)::Vector{Int}
     sim_now_epoch = zdt2unix(Int, sim_now)
     s3db_pkeys = Symbol.(metadata.meta["superkey"])
     unique_keys = setdiff(s3db_pkeys, _S3DB_NON_ID_COLS)
@@ -388,9 +418,7 @@ function _filter_sim_now(df::DataFrame, metadata::S3DBMeta, sim_now::ZonedDateTi
         end
     end
 
-    # There's no point in materializing the selections at this stage because
-    # we'll be running a vcat in the next step
-    return @view df[selections, :]
+    return selections
 end
 
 # generates a DF filter function given filters as a Dict
