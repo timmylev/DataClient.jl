@@ -38,11 +38,12 @@ Gathers data from a target dataset as a `DataFrame`.
     the `sim_now` (cutoff) will be returned for every group of rows with the same id. The
     id of a row is the primary key of the row minus the `release_date` and `tag`. This
     is only supported for [`S3DB`](@ref) stores.
-- `filters`: (Optional) Additional column-wise containment filters to apply to the gather
-    query. This filter is run before the `sim_now` filter if both are provided, which may
-    boost overall query performance when compared to just using `sim_now` alone.
-- `excludes`: (Optional) This is the opposite to the `filters` kwarg, it excludes any
-    rows with matching column values.
+- `filters`: (Optional) Additional column-wise containment filters to apply to the query
+    to only INCLUDE rows with matching column values. This filter is run before the
+    `sim_now` filter if both are provided, which may boost overall query performance
+    when compared to just using the `sim_now` filter alone.
+- `excludes`: (Optional) This works in a similar but opposite way to the `filters` kwarg,
+    it EXCLUDES any rows with matching column values.
 
 !!! note "IMPORTANT"
     The `start_dt` and `end_dt` filters are only applied to the `Index` column of the
@@ -253,12 +254,8 @@ function _load_s3_files(
     file_format = get_file_format(meta)
     to_decompress = get(Configs.get_configs(), "DATACLIENT_CACHE_DECOMPRESS", true)
 
-    # additional 'containment' filters
-    df_filter_plus = if isnothing(filters) && isnothing(excludes)
-        nothing
-    else
-        df_filter_factory(filters, excludes)
-    end
+    # This will be `nothing` if both `filters` and `excludes` are nothing/empty
+    custom_filter_func = df_filter_factory(filters, excludes)
 
     @timeit to "async loop" begin
         asyncmap(file_keys; ntasks=_GATHER_ASYNC_NTASKS) do key
@@ -283,9 +280,9 @@ function _load_s3_files(
                     # The index filter. Typically, this will only run on the first and last file
                     @timeit to "df filter" df = filter_df(df, start, stop, meta; s3_key=key)
 
-                    # additional 'containment' filters
-                    sdf = if !isempty(df) && !isnothing(df_filter_plus)
-                        @timeit to "df filter_plus" filter(df_filter_plus, df; view=true)
+                    # Additional filters if `filters` and/or `excludes` are specified
+                    sdf = if !isempty(df) && !isnothing(custom_filter_func)
+                        @timeit to "df filter_plus" custom_filter_func(df)  # returns a view
                     else
                         df
                     end
@@ -297,7 +294,7 @@ function _load_s3_files(
                         @timeit to "df sim_now" selections = _filter_sim_now(
                             sdf, meta, sim_now
                         )
-                        # Extract the selections as a view from the original dataframe
+                        # Always extract the selections as a view from the original dataframe
                         sdf = @view df[selections, :]
                     end
 
@@ -428,24 +425,35 @@ function _filter_sim_now(
     return selections
 end
 
-# generates a DF filter function given filters as a Dict
+# Factorty function to generate a custom-reusable DF filter func
 function df_filter_factory(
-    filters::Union{Nothing,Dict{Symbol,Vector{P}}}=nothing,
-    excludes::Union{Nothing,Dict{Symbol,Vector{Q}}}=nothing,
+    filters::Union{Nothing,Dict{Symbol,Vector{P}}},
+    excludes::Union{Nothing,Dict{Symbol,Vector{Q}}},
 ) where {P,Q}
     filters = isnothing(filters) ? Dict() : filters
     excludes = isnothing(excludes) ? Dict() : excludes
 
-    inclusivity = append!(ones(Bool, length(filters)), zeros(Bool, length(excludes)))
-    fkeys = append!(collect(keys(filters)), collect(keys(excludes)))
-    fvals = append!(Set.(values(filters)), Set.(values(excludes)))
-
-    function fn(args...)
-        for (i, el) in enumerate(args)
-            (el in fvals[i]) == inclusivity[i] || return false
-        end
-        return true
+    if isempty(filters) && isempty(excludes)
+        return nothing
     end
 
-    return fkeys => fn
+    # Do this conversion once, here, such that they are reusable.
+    filters_set = Dict(k => Set(v) for (k, v) in filters)
+    excludes_set = Dict(k => Set(v) for (k, v) in excludes)
+
+    function _custom_filter_func(df::DataFrame)
+        mask = nothing
+
+        for (items, inclusivity) in ((filters_set, true), (excludes_set, false))
+            for (k, v) in items
+                # a bit mask for the df column on which rows to keep/trash
+                curr_mask = in.(df[!, k], Ref(v)) .== inclusivity
+                mask = isnothing(mask) ? curr_mask : mask .& curr_mask
+            end
+        end
+
+        return @view df[mask, :]
+    end
+
+    return _custom_filter_func
 end
