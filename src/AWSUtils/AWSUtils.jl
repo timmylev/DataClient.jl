@@ -1,6 +1,7 @@
 module AWSUtils
 
 using AWS
+using AWS.AWSExceptions: AWSException
 using AWSS3
 using Dates
 using Memento
