@@ -159,7 +159,23 @@ function s3_cached_get(
 
     get!(cache.dict, cached_path) do
         trace(LOGGER, "Downloading S3 file 's3://$s3_bucket/$s3_key'...")
-        data = @mock s3_get(s3_bucket, s3_key; retry=false)
+
+        data = nothing
+        MAX_ATTEMPTS = 3
+        attempts = 0
+        while true
+            attempts += 1
+            try
+                data = @mock s3_get(s3_bucket, s3_key; retry=false)
+                break
+            catch err
+                # Does retries for non-AWSExceptions
+                # https://gitlab.invenia.ca/invenia/Datafeeds/DataClient.jl/-/issues/20
+                if isa(err, AWSException) || attempts >= MAX_ATTEMPTS
+                    throw(err)
+                end
+            end
+        end
 
         if !isnothing(codec)
             data = @mock transcode(codec, data)
