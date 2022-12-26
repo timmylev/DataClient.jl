@@ -215,7 +215,7 @@ function Base.show(io::IO, item::S3Meta)
         push!(lines, format_dict(getfield(item, p); offset=max_len + 5))
     end
 
-    return print(join(lines, "\n"))
+    return print(io, join(lines, "\n"))
 end
 
 ######################################################################
