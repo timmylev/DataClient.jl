@@ -1,3 +1,5 @@
+using Base.Threads: @spawn, threadid
+
 using .AWSUtils: s3_cached_get
 using AWS.AWSExceptions: AWSException
 using TimeZones: zdt2unix
@@ -269,21 +271,13 @@ function _load_s3_files(
 )::DataFrame where {T,P,Q}
     to = TimerOutput()
     # This will be `nothing` if both `filters` and `excludes` are nothing/empty
-    custom_filter_func = df_filter_factory(filters, excludes)
+    custom_filter = df_filter_factory(filters, excludes)
 
-    timer, ntasks = concurrently ? (nothing, _GATHER_ASYNC_NTASKS) : (to, 1)
+    lim_asyncmap(f, c) = asyncmap(f, c; ntasks=_GATHER_ASYNC_NTASKS)
+    timer, mapper = concurrently ? (nothing, lim_asyncmap) : (to, map)
 
-    @timeit to "load s3 files" dfs = asyncmap(file_keys; ntasks=ntasks) do key
-        t = Threads.@spawn _load_s3_file(
-            key,
-            start,
-            stop,
-            meta;
-            sim_now=sim_now,
-            custom_filter_func=custom_filter_func,
-            timer=timer,
-        )
-        fetch(t)
+    @timeit to "load s3 files" dfs = mapper(file_keys) do key
+        fetch(@spawn _load_s3_file(key, start, stop, meta, sim_now, custom_filter, timer))
     end
 
     filter!(!isnothing, dfs)
@@ -312,12 +306,12 @@ function _load_s3_file(
     s3_key::AbstractString,
     start::T,
     stop::T,
-    meta::S3Meta;
-    sim_now::Union{ZonedDateTime,Nothing}=nothing,
-    custom_filter_func=nothing,
-    timer::Union{Nothing,TimerOutput}=nothing,
+    meta::S3Meta,
+    sim_now::Union{ZonedDateTime,Nothing},
+    custom_filter_func,
+    timer::Union{TimerOutput,Nothing},
 ) where {T}
-    trace(LOGGER, "Processing file '$s3_key' on thread $(Threads.threadid())...")
+    trace(LOGGER, "Processing file '$s3_key' on thread $(threadid())...")
 
     # simply use a dummy timer if one is not given
     to = isnothing(timer) ? TimerOutput() : timer
