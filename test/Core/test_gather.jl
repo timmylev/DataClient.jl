@@ -77,7 +77,9 @@ using TimeZones: zdt2unix
 
         # Other Errors are thrown
         apply(@patch s3_cached_get(b, k; kwargs...) = get_test_data(k, AwsOtherErr)) do
-            @test_throws AwsOtherErr _load_s3_files(file_keys, start_dt, end_dt, METADATA)
+            @test_throws TaskFailedException _load_s3_files(
+                file_keys, start_dt, end_dt, METADATA
+            )
         end
 
         # returns an empty DataFrame if no data is found
