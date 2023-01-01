@@ -265,35 +265,22 @@ function _load_s3_files(
     # This will be `nothing` if both `filters` and `excludes` are nothing/empty
     custom_filter_func = df_filter_factory(filters, excludes)
 
-    # generate callables
-    jobs = [
-        timer -> _load_s3_file(
-            s3_key,
+    timer, ntasks = concurrently ? (nothing, _GATHER_ASYNC_NTASKS) : (to, 1)
+
+    @timeit to "load s3 files" dfs = asyncmap(file_keys; ntasks=ntasks) do key
+        t = Threads.@spawn _load_s3_file(
+            key,
             start,
             stop,
             meta;
             sim_now=sim_now,
             custom_filter_func=custom_filter_func,
             timer=timer,
-        ) for s3_key in sort(file_keys)
-    ]
-
-    @timeit to "process dfs" dfs = if concurrently
-        # use a Channel to set a concurrency limit
-        tasks = Channel(; ctype=Task, csize=_GATHER_ASYNC_NTASKS) do chnl
-            for job in jobs
-                # TimerOutputs.jl doesn't work with concurrent processing
-                timer = nothing
-                put!(chnl, Threads.@spawn job(timer))
-            end
-        end
-        [fetch(t) for t in tasks]
-    else
-        timer = to
-        [job(timer) for job in jobs]
+        )
+        fetch(t)
     end
 
-    dfs = [d for d in dfs if !isnothing(d)]
+    filter!(!isnothing, dfs)
 
     results = if !isempty(dfs)
         @timeit to "vcat dfs" df = vcat(dfs...)
@@ -329,35 +316,27 @@ function _load_s3_file(
     # simply use a dummy timer if one is not given
     to = isnothing(timer) ? TimerOutput() : timer
 
-    @timeit to "df download" file_path = try
+    try
         to_decompress = get(Configs.get_configs(), "DATACLIENT_CACHE_DECOMPRESS", true)
-        @mock s3_cached_get(meta.store.bucket, s3_key; decompress=to_decompress)
-    catch err
-        isa(err, AWSException) && err.code == "NoSuchKey" || throw(err)
-        debug(LOGGER, "S3 object '$s3_key' not found.")
-        nothing
-    end
+        @timeit to "s3 file download" file_path = @mock s3_cached_get(
+            meta.store.bucket, s3_key; decompress=to_decompress
+        )
 
-    return if isnothing(file_path)
-        nothing
-    else
-        # the file may have been decompressed beforehand by s3_cached_get
         file_format, compression = FileFormats.detect_format(file_path)
-
-        @timeit to "df load" df = load_df(file_path, file_format, compression)
+        @timeit to "s3 file to df" df = load_df(file_path, file_format, compression)
 
         # The index filter. Typically, this will only run on the first and last file
-        @timeit to "df filter" df = filter_df(df, start, stop, meta; s3_key=s3_key)
+        @timeit to "df filter index" df = filter_df(df, start, stop, meta; s3_key=s3_key)
 
         # Additional filters if `filters` and/or `excludes` are specified
         sdf = if !isempty(df) && !isnothing(custom_filter_func)
-            @timeit to "df filter_plus" custom_filter_func(df)  # returns a view
+            @timeit to "df filter other" custom_filter_func(df)  # returns a view
         else
             df
         end
 
         # sim_now filter
-        @timeit to "df sim_now" if !isempty(sdf) && !isnothing(sim_now)
+        @timeit to "df filter sim_now" if !isempty(sdf) && !isnothing(sim_now)
             # note that if sdf is a SubDataFrame, this returns the row number
             # in the original DataFrame.
             selections = _filter_sim_now(sdf, meta, sim_now)
@@ -365,7 +344,12 @@ function _load_s3_file(
             sdf = @view df[selections, :]
         end
 
-        sdf
+        return sdf
+
+    catch err
+        isa(err, AWSException) && err.code == "NoSuchKey" || throw(err)
+        debug(LOGGER, "S3 object '$s3_key' not found.")
+        return nothing
     end
 end
 
