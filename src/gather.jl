@@ -19,6 +19,7 @@ const _S3DB_NON_ID_COLS = [_S3DB_RELEASE_COL, :tag]
         sim_now::Union{ZonedDateTime,Nothing}=nothing,
         filters::Union{Nothing,Dict{Symbol,Vector{P}}}=nothing,
         excludes::Union{Nothing,Dict{Symbol,Vector{Q}}}=nothing,
+        concurrently::Bool=true,
     )::DataFrame where {P}
 
 Gathers data from a target dataset as a `DataFrame`.
@@ -44,6 +45,11 @@ Gathers data from a target dataset as a `DataFrame`.
     when compared to just using the `sim_now` filter alone.
 - `excludes`: (Optional) This works in a similar but opposite way to the `filters` kwarg,
     it EXCLUDES any rows with matching column values.
+- `concurrently`: (Optional) Determines whether or not s3 files are downloaded and
+    processed concurrently. Leaving this as enabled leads to a significant performance
+    boost even if only running on a single thread. It may be helpful to turn this off
+    when doing performance analysis as it will provide a more a detailed breakdown of
+    internal components via TimerOutputs.jl in the `trace` logs.
 
 !!! note "IMPORTANT"
     The `start_dt` and `end_dt` filters are only applied to the `Index` column of the
