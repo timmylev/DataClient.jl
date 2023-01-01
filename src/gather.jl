@@ -273,10 +273,11 @@ function _load_s3_files(
     # This will be `nothing` if both `filters` and `excludes` are nothing/empty
     custom_filter = df_filter_factory(filters, excludes)
 
-    lim_asyncmap(f, c) = asyncmap(f, c; ntasks=_GATHER_ASYNC_NTASKS)
-    timer, mapper = concurrently ? (nothing, lim_asyncmap) : (to, map)
+    timer, ntasks = concurrently ? (nothing, _GATHER_ASYNC_NTASKS) : (to, 1)
 
-    @timeit to "load s3 files" dfs = mapper(file_keys) do key
+    # - asyncmap controls the overall concurrency rate
+    # - @spawn triggers multi-threading (when enabled)
+    @timeit to "load s3 files" dfs = asyncmap(file_keys; ntasks=ntasks) do key
         fetch(@spawn _load_s3_file(key, start, stop, meta, sim_now, custom_filter, timer))
     end
 
