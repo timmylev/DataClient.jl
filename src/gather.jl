@@ -21,7 +21,7 @@ const _S3DB_NON_ID_COLS = [_S3DB_RELEASE_COL, :tag]
         sim_now::Union{ZonedDateTime,Nothing}=nothing,
         filters::Union{Nothing,Dict{Symbol,Vector{P}}}=nothing,
         excludes::Union{Nothing,Dict{Symbol,Vector{Q}}}=nothing,
-        concurrently::Bool=true,
+        ntasks::Int=_GATHER_ASYNC_NTASKS,
     )::DataFrame where {P}
 
 Gathers data from a target dataset as a `DataFrame`.
@@ -47,11 +47,8 @@ Gathers data from a target dataset as a `DataFrame`.
     when compared to just using the `sim_now` filter alone.
 - `excludes`: (Optional) This works in a similar but opposite way to the `filters` kwarg,
     it EXCLUDES any rows with matching column values.
-- `concurrently`: (Optional) Determines whether or not s3 files are downloaded and
-    processed concurrently. Leaving this as enabled leads to a significant performance
-    boost even if only running on a single thread. It may be helpful to turn this off
-    when doing performance analysis as it will provide a more a detailed breakdown of
-    internal components via TimerOutputs.jl in the `trace` logs.
+- `ntasks`: (Optional) The number of tasks to run concurrently when downloading and
+    processing s3 files. Tasks are created using Threads.@spawn.
 
 !!! note "IMPORTANT"
     The `start_dt` and `end_dt` filters are only applied to the `Index` column of the
@@ -100,7 +97,7 @@ function gather(
     sim_now::Union{ZonedDateTime,Nothing}=nothing,
     filters::Union{Nothing,Dict{Symbol,Vector{P}}}=nothing,
     excludes::Union{Nothing,Dict{Symbol,Vector{Q}}}=nothing,
-    concurrently::Bool=true,
+    ntasks::Int=_GATHER_ASYNC_NTASKS,
 )::DataFrame where {P,Q}
     # get_backend() returns an OrderedDict, i.e. the search order in configs.yaml
     for (name, store) in pairs(get_backend())
@@ -116,7 +113,7 @@ function gather(
                 sim_now=sim_now,
                 filters=filters,
                 excludes=excludes,
-                concurrently=concurrently,
+                ntasks=ntasks,
             )
         catch err
             isa(err, MissingDataError) || throw(err)
@@ -139,7 +136,7 @@ function gather(
     sim_now::Union{ZonedDateTime,Nothing}=nothing,
     filters::Union{Nothing,Dict{Symbol,Vector{P}}}=nothing,
     excludes::Union{Nothing,Dict{Symbol,Vector{Q}}}=nothing,
-    concurrently::Bool=true,
+    ntasks::Int=_GATHER_ASYNC_NTASKS,
 )::DataFrame where {P,Q}
     store = get_backend(store_id)
     data = _gather(
@@ -151,7 +148,7 @@ function gather(
         sim_now=sim_now,
         filters=filters,
         excludes=excludes,
-        concurrently=concurrently,
+        ntasks=ntasks,
     )
 
     return if !isempty(data)
@@ -170,7 +167,7 @@ function _gather(
     sim_now::Union{ZonedDateTime,Nothing}=nothing,
     filters::Union{Nothing,Dict{Symbol,Vector{P}}}=nothing,
     excludes::Union{Nothing,Dict{Symbol,Vector{Q}}}=nothing,
-    concurrently::Bool=true,
+    ntasks::Int=_GATHER_ASYNC_NTASKS,
 )::DataFrame where {T,P,Q}
     if !isnothing(sim_now) && !isa(store, S3DB)
         throw(ArgumentError("The `sim_now` arg is only supported for `S3DB` stores."))
@@ -179,6 +176,10 @@ function _gather(
     # ensure conflicting filters don't overlap
     if !isnothing(filters) && !isnothing(excludes) && !isdisjoint(filters, excludes)
         throw(ArgumentError("The `filters` and `excludes` keys must not overlap"))
+    end
+
+    if ntasks <= 0
+        throw(ArgumentError("`ntasks` must be positive"))
     end
 
     meta = @mock get_metadata(collection, dataset, store)
@@ -204,7 +205,7 @@ function _gather(
         sim_now=sim_now,
         filters=filters,
         excludes=excludes,
-        concurrently=concurrently,
+        ntasks=ntasks,
     )
     rtime = "($(s_fmt(t2)))"
     debug(LOGGER, "Loading $nkeys files from $ds_name took $rtime")
@@ -267,13 +268,14 @@ function _load_s3_files(
     sim_now::Union{ZonedDateTime,Nothing}=nothing,
     filters::Union{Nothing,Dict{Symbol,Vector{P}}}=nothing,
     excludes::Union{Nothing,Dict{Symbol,Vector{Q}}}=nothing,
-    concurrently::Bool=true,
+    ntasks::Int=_GATHER_ASYNC_NTASKS,
 )::DataFrame where {T,P,Q}
     to = TimerOutput()
     # This will be `nothing` if both `filters` and `excludes` are nothing/empty
     custom_filter = df_filter_factory(filters, excludes)
 
-    timer, ntasks = concurrently ? (nothing, _GATHER_ASYNC_NTASKS) : (to, 1)
+    # TimerOutputs.jl doesn't work with concurrent processing, omit detailed timings
+    timer = ntasks == 1 ? to : nothing
 
     # - asyncmap controls the overall concurrency rate
     # - @spawn triggers multi-threading (when enabled)
