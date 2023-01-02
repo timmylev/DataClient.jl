@@ -318,7 +318,11 @@ function _load_s3_file(
     trace(LOGGER, "Processing file '$s3_key' on thread $(threadid())...")
 
     # simply use a dummy timer if one is not given
-    to = isnothing(timer) ? TimerOutput() : timer
+    to = timer
+    if isnothing(to)
+        to = TimerOutput()
+        disable_timer!(to)
+    end
 
     try
         to_decompress = get(Configs.get_configs(), "DATACLIENT_CACHE_DECOMPRESS", true)
