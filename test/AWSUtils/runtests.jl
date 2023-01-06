@@ -153,6 +153,24 @@ using TranscodingStreams: transcode
             @test endswith(cached_path, ".arrow.ZST")
         end
     end
+
+    @testset "test non AWS errors" begin
+        NON_AWS_ERRORS = Ref(0)
+        patch_s3_errors = @patch function s3_get(s3_bucket, s3_key; kwargs...)
+            NON_AWS_ERRORS[] += 1
+            return error("non-aws-error")
+        end
+
+        apply(patch_s3_errors) do
+            try
+                cached_path = s3_cached_get("bucket", "key")
+            catch err
+            end
+
+            # retried 3 times
+            @test NON_AWS_ERRORS[] == 3
+        end
+    end
 end
 
 @testset "test src/AWSUtils/s3_list_dirs.jl" begin
