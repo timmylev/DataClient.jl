@@ -17,7 +17,9 @@ const _S3DB_NON_ID_COLS = [_S3DB_RELEASE_COL, :tag]
         end_dt::ZonedDateTime,
         [store_id::AbstractString,];
         sim_now::Union{ZonedDateTime,Nothing}=nothing,
-    )::DataFrame
+        filters::Union{Nothing,Dict{Symbol,Vector{P}}}=nothing,
+        excludes::Union{Nothing,Dict{Symbol,Vector{Q}}}=nothing,
+    )::DataFrame where {P}
 
 Gathers data from a target dataset as a `DataFrame`.
 
@@ -36,6 +38,12 @@ Gathers data from a target dataset as a `DataFrame`.
     the `sim_now` (cutoff) will be returned for every group of rows with the same id. The
     id of a row is the primary key of the row minus the `release_date` and `tag`. This
     is only supported for [`S3DB`](@ref) stores.
+- `filters`: (Optional) Additional column-wise containment filters to apply to the query
+    to only INCLUDE rows with matching column values. This filter is run before the
+    `sim_now` filter if both are provided, which may boost overall query performance
+    when compared to just using the `sim_now` filter alone.
+- `excludes`: (Optional) This works in a similar but opposite way to the `filters` kwarg,
+    it EXCLUDES any rows with matching column values.
 
 !!! note "IMPORTANT"
     The `start_dt` and `end_dt` filters are only applied to the `Index` column of the
@@ -82,13 +90,24 @@ function gather(
     start::ZonedDateTime,
     stop::ZonedDateTime;
     sim_now::Union{ZonedDateTime,Nothing}=nothing,
-)::DataFrame
+    filters::Union{Nothing,Dict{Symbol,Vector{P}}}=nothing,
+    excludes::Union{Nothing,Dict{Symbol,Vector{Q}}}=nothing,
+)::DataFrame where {P,Q}
     # get_backend() returns an OrderedDict, i.e. the search order in configs.yaml
     for (name, store) in pairs(get_backend())
         data = nothing
 
         try
-            data = _gather(collection, dataset, start, stop, store; sim_now=sim_now)
+            data = _gather(
+                collection,
+                dataset,
+                start,
+                stop,
+                store;
+                sim_now=sim_now,
+                filters=filters,
+                excludes=excludes,
+            )
         catch err
             isa(err, MissingDataError) || throw(err)
         end
@@ -108,9 +127,20 @@ function gather(
     end_dt::ZonedDateTime,
     store_id::AbstractString;
     sim_now::Union{ZonedDateTime,Nothing}=nothing,
-)::DataFrame
+    filters::Union{Nothing,Dict{Symbol,Vector{P}}}=nothing,
+    excludes::Union{Nothing,Dict{Symbol,Vector{Q}}}=nothing,
+)::DataFrame where {P,Q}
     store = get_backend(store_id)
-    data = _gather(collection, dataset, start_dt, end_dt, store; sim_now=sim_now)
+    data = _gather(
+        collection,
+        dataset,
+        start_dt,
+        end_dt,
+        store;
+        sim_now=sim_now,
+        filters=filters,
+        excludes=excludes,
+    )
 
     return if !isempty(data)
         data
@@ -126,9 +156,16 @@ function _gather(
     stop::T,
     store::S3Store;
     sim_now::Union{ZonedDateTime,Nothing}=nothing,
-)::DataFrame where {T}
+    filters::Union{Nothing,Dict{Symbol,Vector{P}}}=nothing,
+    excludes::Union{Nothing,Dict{Symbol,Vector{Q}}}=nothing,
+)::DataFrame where {T,P,Q}
     if !isnothing(sim_now) && !isa(store, S3DB)
         throw(ArgumentError("The `sim_now` arg is only supported for `S3DB` stores."))
+    end
+
+    # ensure conflicting filters don't overlap
+    if !isnothing(filters) && !isnothing(excludes) && !isdisjoint(filters, excludes)
+        throw(ArgumentError("The `filters` and `excludes` keys must not overlap"))
     end
 
     meta = @mock get_metadata(collection, dataset, store)
@@ -146,7 +183,9 @@ function _gather(
         trace(LOGGER, "Listing $nkeys file keys from $ds_name took $rtime")
     end
 
-    t2 = @elapsed results = @mock _load_s3_files(keys, start, stop, meta; sim_now=sim_now)
+    t2 = @elapsed results = @mock _load_s3_files(
+        keys, start, stop, meta; sim_now=sim_now, filters=filters, excludes=excludes
+    )
     rtime = "($(s_fmt(t2)))"
     debug(LOGGER, "Loading $nkeys files from $ds_name took $rtime")
 
@@ -206,12 +245,17 @@ function _load_s3_files(
     stop::T,
     meta::S3Meta;
     sim_now::Union{ZonedDateTime,Nothing}=nothing,
-)::DataFrame where {T}
+    filters::Union{Nothing,Dict{Symbol,Vector{P}}}=nothing,
+    excludes::Union{Nothing,Dict{Symbol,Vector{Q}}}=nothing,
+)::DataFrame where {T,P,Q}
     to = TimerOutput()
     dfs = Dict{String,AbstractDataFrame}()
 
     file_format = get_file_format(meta)
     to_decompress = get(Configs.get_configs(), "DATACLIENT_CACHE_DECOMPRESS", true)
+
+    # This will be `nothing` if both `filters` and `excludes` are nothing/empty
+    custom_filter_func = df_filter_factory(filters, excludes)
 
     @timeit to "async loop" begin
         asyncmap(file_keys; ntasks=_GATHER_ASYNC_NTASKS) do key
@@ -233,14 +277,30 @@ function _load_s3_files(
 
                     @timeit to "df load" df = load_df(file_path, file_format, compression)
 
+                    # The index filter. Typically, this will only run on the first and last file
                     @timeit to "df filter" df = filter_df(df, start, stop, meta; s3_key=key)
 
-                    if !isnothing(sim_now)
-                        @timeit to "df sim_now" df = _filter_sim_now(df, meta, sim_now)
+                    # Additional filters if `filters` and/or `excludes` are specified
+                    sdf = if !isempty(df) && !isnothing(custom_filter_func)
+                        @timeit to "df filter_plus" custom_filter_func(df)  # returns a view
+                    else
+                        df
                     end
 
-                    if !isempty(df)
-                        dfs[key] = df
+                    # sim_now filter
+                    if !isempty(sdf) && !isnothing(sim_now)
+                        # note that if sdf is a SubDataFrame, this returns the row number
+                        # in the original DataFrame.
+                        @timeit to "df sim_now" selections = _filter_sim_now(
+                            sdf, meta, sim_now
+                        )
+                        # Always extract the selections as a view from the original dataframe
+                        sdf = @view df[selections, :]
+                    end
+
+                    if !isempty(sdf)
+                        # sdf may be a view, we'll be running a vcat later so this is fine.
+                        dfs[key] = sdf
                     end
                 end
             end
@@ -317,7 +377,27 @@ function _process_dataframe!(df::DataFrame, metadata::FFSMeta)
     return nothing
 end
 
-function _filter_sim_now(df::DataFrame, metadata::S3DBMeta, sim_now::ZonedDateTime)
+"""
+    _filter_sim_now(
+        df::AbstractDataFrame, metadata::S3DBMeta, sim_now::ZonedDateTime
+    )::Vector{Int}
+
+Filters the input dataframe for the row with the latest `release_date` up to the
+`sim_now` (cutoff) for every group of rows with the same id. The id of a row is the
+primary key of the row minus the `release_date` and `tag`.
+
+Returns the indices of the selected rows from the original DataFrame (eg. if a
+SubDataFrame was passed in instead of a DataFrame, the indices will map to the row
+number in the original DataFrame, not the SubDataFrame).
+
+# Arguments
+- `df`: The dataframe to filter
+- `metadata`: The S3DB metadata, contains pkey information
+- `sim_now`: The sim_now filter
+"""
+function _filter_sim_now(
+    df::AbstractDataFrame, metadata::S3DBMeta, sim_now::ZonedDateTime
+)::Vector{Int}
     sim_now_epoch = zdt2unix(Int, sim_now)
     s3db_pkeys = Symbol.(metadata.meta["superkey"])
     unique_keys = setdiff(s3db_pkeys, _S3DB_NON_ID_COLS)
@@ -342,7 +422,38 @@ function _filter_sim_now(df::DataFrame, metadata::S3DBMeta, sim_now::ZonedDateTi
         end
     end
 
-    # There's no point in materializing the selections at this stage because
-    # we'll be running a vcat in the next step
-    return @view df[selections, :]
+    return selections
+end
+
+# Factorty function to generate a custom-reusable DF filter func
+function df_filter_factory(
+    filters::Union{Nothing,Dict{Symbol,Vector{P}}},
+    excludes::Union{Nothing,Dict{Symbol,Vector{Q}}},
+) where {P,Q}
+    filters = isnothing(filters) ? Dict() : filters
+    excludes = isnothing(excludes) ? Dict() : excludes
+
+    if isempty(filters) && isempty(excludes)
+        return nothing
+    end
+
+    # Do this conversion once, here, such that they are reusable.
+    filters_set = Dict(k => Set(v) for (k, v) in filters)
+    excludes_set = Dict(k => Set(v) for (k, v) in excludes)
+
+    function _custom_filter_func(df::DataFrame)
+        mask = nothing
+
+        for (items, inclusivity) in ((filters_set, true), (excludes_set, false))
+            for (k, v) in items
+                # a bit mask for the df column on which rows to keep/trash
+                curr_mask = in.(df[!, k], Ref(v)) .== inclusivity
+                mask = isnothing(mask) ? curr_mask : mask .& curr_mask
+            end
+        end
+
+        return @view df[mask, :]
+    end
+
+    return _custom_filter_func
 end
