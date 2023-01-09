@@ -162,14 +162,11 @@ using TranscodingStreams: transcode
         end
 
         apply(patch_s3_errors) do
-            try
-                cached_path = s3_cached_get("bucket", "key")
-            catch err
-            end
-
-            # retried 3 times
-            @test NON_AWS_ERRORS[] == 3
+            @test_throws ErrorException s3_cached_get("bucket", "key")
         end
+
+        # retried 3 times
+        @test NON_AWS_ERRORS[] == 3
     end
 end
 

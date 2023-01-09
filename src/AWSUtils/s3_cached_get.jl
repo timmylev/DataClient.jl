@@ -163,7 +163,7 @@ function s3_cached_get(
         data = nothing
         MAX_ATTEMPTS = 3
         attempts = 0
-        while true
+        while attempts < MAX_ATTEMPTS
             attempts += 1
             try
                 # the 'retry' kwarg here is for a different type of retry
