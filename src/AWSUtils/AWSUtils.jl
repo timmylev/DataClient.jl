@@ -4,6 +4,7 @@ using AWS
 using AWS.AWSExceptions: AWSException
 using AWSS3
 using Dates
+using HTTP
 using Memento
 using Mocking
 using LRUCache
