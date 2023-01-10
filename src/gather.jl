@@ -48,8 +48,8 @@ Gathers data from a target dataset as a `DataFrame`.
 - `excludes`: (Optional) This works in a similar but opposite way to the `filters` kwarg,
     it EXCLUDES any rows with matching column values.
 - `ntasks`: (Optional) The number of tasks to run concurrently when downloading and
-    processing s3 files. Each task is runned using Threads.@spawn, so multi-threading will
-    take effect if available.
+    processing s3 files. Each task is run using Threads.@spawn, so multi-threading will
+    take effect if enabled.
 
 !!! note "IMPORTANT"
     The `start_dt` and `end_dt` filters are only applied to the `Index` column of the
@@ -275,13 +275,17 @@ function _load_s3_files(
     # This will be `nothing` if both `filters` and `excludes` are nothing/empty
     custom_filter = df_filter_factory(filters, excludes)
 
-    # TimerOutputs.jl doesn't work with concurrent processing, omit detailed timings
-    timer = ntasks == 1 ? to : nothing
-
-    # - asyncmap controls the overall concurrency rate
-    # - @spawn triggers multi-threading (when enabled)
-    @timeit to "load s3 files" dfs = asyncmap(file_keys; ntasks=ntasks) do key
-        fetch(@spawn _load_s3_file(key, start, stop, meta, sim_now, custom_filter, timer))
+    # Note that TimerOutputs.jl doesn't work with concurrent processing, so detailed
+    # timings will only be available for sequential processing.
+    @timeit to "load s3 files" dfs = if ntasks == 1
+        # technically, we can just stick to asyncmap (the else clause) with ntasks=1, but
+        # that may obfuscate internal error in earlier versions of Julia. So, just use a
+        # for loop such that we can set ntasks=1 and get better stack traces when debugging
+        [_load_s3_file(key, start, stop, meta, sim_now, custom_filter, to) for key in file_keys]
+    else
+        asyncmap(file_keys; ntasks=ntasks) do key
+            fetch(@spawn _load_s3_file(key, start, stop, meta, sim_now, custom_filter, nothing))
+        end
     end
 
     filter!(!isnothing, dfs)
@@ -459,7 +463,7 @@ function _filter_sim_now(
     return selections
 end
 
-# Factorty function to generate a custom-reusable DF filter func
+# Factory function to generate a custom-reusable DF filter func
 function df_filter_factory(
     filters::Union{Nothing,Dict{Symbol,Vector{P}}},
     excludes::Union{Nothing,Dict{Symbol,Vector{Q}}},
