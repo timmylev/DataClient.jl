@@ -60,6 +60,10 @@ using TimeZones: zdt2unix
             expected = collect(range(start_dt, end_dt; step=Hour(1)))
             # show that we're not loading in any unexpected data
             @test isempty(setdiff(loaded, expected))
+
+            # test ntasks=1
+            df2 = _load_s3_files(file_keys, start_dt, end_dt, METADATA; ntasks=1)
+            @test isequal(df, df2)
         end
     end
 
