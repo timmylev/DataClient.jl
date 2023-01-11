@@ -181,9 +181,7 @@ function _gather(
         throw(ArgumentError("The `filters` and `excludes` keys must not overlap"))
     end
 
-    if ntasks <= 0
-        throw(ArgumentError("`ntasks` must be positive"))
-    end
+    ntasks <= 0 && throw(ArgumentError("`ntasks` must be positive"))
 
     meta = @mock get_metadata(collection, dataset, store)
     ds_name = "'$(meta.collection)-$(meta.dataset)'"
