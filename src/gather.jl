@@ -48,8 +48,10 @@ Gathers data from a target dataset as a `DataFrame`.
 - `excludes`: (Optional) This works in a similar but opposite way to the `filters` kwarg,
     it EXCLUDES any rows with matching column values.
 - `ntasks`: (Optional) The number of tasks to run concurrently when downloading and
-    processing s3 files. Each task is run using Threads.@spawn, so multi-threading will
-    take effect if enabled.
+    processing s3 files, defaults to 8. Each task is run using Threads.@spawn, so
+    multi-threading will take effect if enabled. Setting this to 1 will disable asynchrony
+    and provide finer-grain timing logs for different stages during the gather, which
+    maybe handy for benchmarking and debugging (clearer error messages / stack trace).
 
 !!! note "IMPORTANT"
     The `start_dt` and `end_dt` filters are only applied to the `Index` column of the
