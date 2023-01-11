@@ -283,6 +283,10 @@ function _load_s3_files(
         # for loop such that we can set ntasks=1 and get better stack traces when debugging
         [_load_s3_file(key, start, stop, meta, sim_now, custom_filter, to) for key in file_keys]
     else
+        # - asyncmap is used simply because it is a convenient way to managed a fixed number
+        #   of concurrent worker tasks. All worker tasks will be on the same thread.
+        # - @spawn is then called by each worker task, which creates and runs a new Task on any
+        #   available thread (where multithreading comes in, if enabled in Julia).
         asyncmap(file_keys; ntasks=ntasks) do key
             fetch(@spawn _load_s3_file(key, start, stop, meta, sim_now, custom_filter, nothing))
         end
