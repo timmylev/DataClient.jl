@@ -320,7 +320,7 @@ function _load_s3_file(
     sim_now::Union{ZonedDateTime,Nothing},
     custom_filter_func,
     timer::Union{TimerOutput,Nothing},
-) where {T}
+)::Union{AbstractDataFrame,Nothing} where {T}
     trace(LOGGER, "Processing file '$s3_key' on thread $(threadid())...")
 
     # simply use a dummy timer if one is not given
