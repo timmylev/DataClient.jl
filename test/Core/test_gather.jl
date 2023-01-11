@@ -383,4 +383,21 @@ using TimeZones: zdt2unix
             @test_throws MissingDataError(args...) gather(args..., "teststore")
         end
     end
+
+    @testset "test gather: invalid args" begin
+        patched_load = @patch _load_s3_files(args...; kwargs...) = DataFrame()
+        patched_find = @patch _filter_missing(keys, meta) = Vector{String}()
+
+        apply([patched_load, patched_find, patched_s3_cached_get]) do
+            dt = ZonedDateTime(2020, 1, 1, tz"UTC")
+
+            @test_throws ArgumentError(
+                "The `sim_now` arg is only supported for `S3DB` stores."
+            ) _gather(COLL, DS, dt, dt, FFS("buck", "prex"); sim_now=dt)
+
+            @test_throws ArgumentError("`ntasks` must be positive") _gather(
+                COLL, DS, dt, dt, FFS("buck", "prex"); ntasks=0
+            )
+        end
+    end
 end
