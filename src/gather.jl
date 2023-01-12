@@ -31,8 +31,8 @@ Gathers data from a target dataset as a `DataFrame`.
 - `dataset`: The name of the dataset
 - `start_dt`: The start bound (inclusive) of the `Index` column .
 - `end_dt`: The end bound (inclusive) for the `Index` column.
-- `store_id`: (Optional) A registered backend store id or a backend URI. It is recommended
-    to specify this for efficiency reasons. If none is provided, each available store will
+- `store_id`: (Optional) The backend store id or a backend URI. It is recommended to
+    specify this for efficiency reasons. If none is provided, each available store will
     be iteratively checked in order of precedence until the first store containing the
     target dataset is found. Refer to [Configs and Backend](@ref) for more info about
     store precedence and registering custom stores.
