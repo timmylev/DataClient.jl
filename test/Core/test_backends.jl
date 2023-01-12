@@ -45,9 +45,9 @@ using DataStructures
     @testset "test configs - invalid store id" begin
         Configs.reload_configs(joinpath(pwd(), "configs.yaml"))  # reset to default path
         store_id = "new-store"
-        @test_throws ConfigFileError("Store id '$store_id' is not registered.") get_backend(
-            store_id
-        )
+        @test_throws ConfigFileError(
+            "Store id/uri '$store_id' is not registered or is invalid."
+        ) get_backend(store_id)
     end
 
     @testset "test configs - invalid store uri" begin
