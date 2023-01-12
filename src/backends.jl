@@ -73,7 +73,7 @@ function get_backend(store_id::String)::Store
         backend[store_id]
     else
         # If it is not registered, attempt to parse it incase it is a URI
-        store = try
+        try
             _parse_backend_path(store_id)
         catch err
             rethrow(ConfigFileError("Store id '$store_id' is not registered."))
