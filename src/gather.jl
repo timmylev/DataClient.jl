@@ -1,3 +1,5 @@
+using Base.Threads: @spawn, threadid
+
 using .AWSUtils: s3_cached_get
 using AWS.AWSExceptions: AWSException
 using TimeZones: zdt2unix
@@ -19,6 +21,7 @@ const _S3DB_NON_ID_COLS = [_S3DB_RELEASE_COL, :tag]
         sim_now::Union{ZonedDateTime,Nothing}=nothing,
         filters::Union{Nothing,Dict{Symbol,Vector{P}}}=nothing,
         excludes::Union{Nothing,Dict{Symbol,Vector{Q}}}=nothing,
+        ntasks::Int=_GATHER_ASYNC_NTASKS,
     )::DataFrame where {P}
 
 Gathers data from a target dataset as a `DataFrame`.
@@ -44,6 +47,11 @@ Gathers data from a target dataset as a `DataFrame`.
     when compared to just using the `sim_now` filter alone.
 - `excludes`: (Optional) This works in a similar but opposite way to the `filters` kwarg,
     it EXCLUDES any rows with matching column values.
+- `ntasks`: (Optional) The number of tasks to run concurrently when downloading and
+    processing s3 files, defaults to $_GATHER_ASYNC_NTASKS. Each task is run using Threads.@spawn, so
+    multi-threading will take effect if enabled. Setting this to 1 will disable asynchrony
+    and provide finer-grain timing logs for different stages during the gather, which
+    maybe handy for benchmarking and debugging (clearer error messages / stack trace).
 
 !!! note "IMPORTANT"
     The `start_dt` and `end_dt` filters are only applied to the `Index` column of the
@@ -92,6 +100,7 @@ function gather(
     sim_now::Union{ZonedDateTime,Nothing}=nothing,
     filters::Union{Nothing,Dict{Symbol,Vector{P}}}=nothing,
     excludes::Union{Nothing,Dict{Symbol,Vector{Q}}}=nothing,
+    ntasks::Int=_GATHER_ASYNC_NTASKS,
 )::DataFrame where {P,Q}
     # get_backend() returns an OrderedDict, i.e. the search order in configs.yaml
     for (name, store) in pairs(get_backend())
@@ -107,6 +116,7 @@ function gather(
                 sim_now=sim_now,
                 filters=filters,
                 excludes=excludes,
+                ntasks=ntasks,
             )
         catch err
             isa(err, MissingDataError) || throw(err)
@@ -129,6 +139,7 @@ function gather(
     sim_now::Union{ZonedDateTime,Nothing}=nothing,
     filters::Union{Nothing,Dict{Symbol,Vector{P}}}=nothing,
     excludes::Union{Nothing,Dict{Symbol,Vector{Q}}}=nothing,
+    ntasks::Int=_GATHER_ASYNC_NTASKS,
 )::DataFrame where {P,Q}
     store = get_backend(store_id)
     data = _gather(
@@ -140,6 +151,7 @@ function gather(
         sim_now=sim_now,
         filters=filters,
         excludes=excludes,
+        ntasks=ntasks,
     )
 
     return if !isempty(data)
@@ -158,6 +170,7 @@ function _gather(
     sim_now::Union{ZonedDateTime,Nothing}=nothing,
     filters::Union{Nothing,Dict{Symbol,Vector{P}}}=nothing,
     excludes::Union{Nothing,Dict{Symbol,Vector{Q}}}=nothing,
+    ntasks::Int=_GATHER_ASYNC_NTASKS,
 )::DataFrame where {T,P,Q}
     if !isnothing(sim_now) && !isa(store, S3DB)
         throw(ArgumentError("The `sim_now` arg is only supported for `S3DB` stores."))
@@ -167,6 +180,8 @@ function _gather(
     if !isnothing(filters) && !isnothing(excludes) && !isdisjoint(filters, excludes)
         throw(ArgumentError("The `filters` and `excludes` keys must not overlap"))
     end
+
+    ntasks <= 0 && throw(ArgumentError("`ntasks` must be positive"))
 
     meta = @mock get_metadata(collection, dataset, store)
     ds_name = "'$(meta.collection)-$(meta.dataset)'"
@@ -184,7 +199,14 @@ function _gather(
     end
 
     t2 = @elapsed results = @mock _load_s3_files(
-        keys, start, stop, meta; sim_now=sim_now, filters=filters, excludes=excludes
+        keys,
+        start,
+        stop,
+        meta;
+        sim_now=sim_now,
+        filters=filters,
+        excludes=excludes,
+        ntasks=ntasks,
     )
     rtime = "($(s_fmt(t2)))"
     debug(LOGGER, "Loading $nkeys files from $ds_name took $rtime")
@@ -247,68 +269,33 @@ function _load_s3_files(
     sim_now::Union{ZonedDateTime,Nothing}=nothing,
     filters::Union{Nothing,Dict{Symbol,Vector{P}}}=nothing,
     excludes::Union{Nothing,Dict{Symbol,Vector{Q}}}=nothing,
+    ntasks::Int=_GATHER_ASYNC_NTASKS,
 )::DataFrame where {T,P,Q}
     to = TimerOutput()
-    dfs = Dict{String,AbstractDataFrame}()
-
-    file_format = get_file_format(meta)
-    to_decompress = get(Configs.get_configs(), "DATACLIENT_CACHE_DECOMPRESS", true)
-
     # This will be `nothing` if both `filters` and `excludes` are nothing/empty
-    custom_filter_func = df_filter_factory(filters, excludes)
+    custom_filter = df_filter_factory(filters, excludes)
 
-    @timeit to "async loop" begin
-        asyncmap(file_keys; ntasks=_GATHER_ASYNC_NTASKS) do key
-            file_path = nothing
-
-            try
-                file_path = @mock s3_cached_get(
-                    meta.store.bucket, key; decompress=to_decompress
-                )
-
-            catch err
-                isa(err, AWSException) && err.code == "NoSuchKey" || throw(err)
-                debug(LOGGER, "S3 object '$key' not found.")
-
-            finally
-                if !isnothing(file_path)
-                    # the file may have been decompressed beforehand by s3_cached_get
-                    _, compression = FileFormats.detect_format(file_path)
-
-                    @timeit to "df load" df = load_df(file_path, file_format, compression)
-
-                    # The index filter. Typically, this will only run on the first and last file
-                    @timeit to "df filter" df = filter_df(df, start, stop, meta; s3_key=key)
-
-                    # Additional filters if `filters` and/or `excludes` are specified
-                    sdf = if !isempty(df) && !isnothing(custom_filter_func)
-                        @timeit to "df filter_plus" custom_filter_func(df)  # returns a view
-                    else
-                        df
-                    end
-
-                    # sim_now filter
-                    if !isempty(sdf) && !isnothing(sim_now)
-                        # note that if sdf is a SubDataFrame, this returns the row number
-                        # in the original DataFrame.
-                        @timeit to "df sim_now" selections = _filter_sim_now(
-                            sdf, meta, sim_now
-                        )
-                        # Always extract the selections as a view from the original dataframe
-                        sdf = @view df[selections, :]
-                    end
-
-                    if !isempty(sdf)
-                        # sdf may be a view, we'll be running a vcat later so this is fine.
-                        dfs[key] = sdf
-                    end
-                end
-            end
+    # Note that TimerOutputs.jl doesn't work with concurrent processing, so detailed
+    # timings will only be available for sequential processing.
+    @timeit to "load s3 files" dfs = if ntasks == 1
+        # technically, we can just stick to asyncmap (the else clause) with ntasks=1, but
+        # that may obfuscate internal error in earlier versions of Julia. So, just use a
+        # for loop such that we can set ntasks=1 and get better stack traces when debugging
+        [_load_s3_file(key, start, stop, meta, sim_now, custom_filter, to) for key in file_keys]
+    else
+        # - asyncmap is used simply because it is a convenient way to managed a fixed number
+        #   of concurrent worker tasks. All worker tasks will be on the same thread.
+        # - @spawn is then called by each worker task, which creates and runs a new Task on any
+        #   available thread (where multithreading comes in, if enabled in Julia).
+        asyncmap(file_keys; ntasks=ntasks) do key
+            fetch(@spawn _load_s3_file(key, start, stop, meta, sim_now, custom_filter, nothing))
         end
     end
 
+    filter!(!isnothing, dfs)
+
     results = if !isempty(dfs)
-        @timeit to "vcat dfs" df = vcat([dfs[key] for key in sort(collect(keys(dfs)))]...)
+        @timeit to "vcat dfs" df = vcat(dfs...)
         @timeit to "df xform" _process_dataframe!(df, meta)
         df
     else
@@ -325,6 +312,61 @@ function _load_s3_files(
     end
 
     return results
+end
+
+function _load_s3_file(
+    s3_key::AbstractString,
+    start::T,
+    stop::T,
+    meta::S3Meta,
+    sim_now::Union{ZonedDateTime,Nothing},
+    custom_filter_func,
+    timer::Union{TimerOutput,Nothing},
+)::Union{AbstractDataFrame,Nothing} where {T}
+    trace(LOGGER, "Processing file '$s3_key' on thread $(threadid())...")
+
+    # simply use a dummy timer if one is not given
+    to = timer
+    if isnothing(to)
+        to = TimerOutput()
+        disable_timer!(to)
+    end
+
+    try
+        to_decompress = get(Configs.get_configs(), "DATACLIENT_CACHE_DECOMPRESS", true)
+        @timeit to "s3 file download" file_path = @mock s3_cached_get(
+            meta.store.bucket, s3_key; decompress=to_decompress
+        )
+
+        file_format, compression = FileFormats.detect_format(file_path)
+        @timeit to "s3 file to df" df = load_df(file_path, file_format, compression)
+
+        # The index filter. Typically, this will only run on the first and last file
+        @timeit to "df filter index" df = filter_df(df, start, stop, meta; s3_key=s3_key)
+
+        # Additional filters if `filters` and/or `excludes` are specified
+        sdf = if !isempty(df) && !isnothing(custom_filter_func)
+            @timeit to "df filter other" custom_filter_func(df)  # returns a view
+        else
+            df
+        end
+
+        # sim_now filter
+        @timeit to "df filter sim_now" if !isempty(sdf) && !isnothing(sim_now)
+            # note that if sdf is a SubDataFrame, this returns the row number
+            # in the original DataFrame.
+            selections = _filter_sim_now(sdf, meta, sim_now)
+            # Always extract the selections as a view from the original dataframe
+            sdf = @view df[selections, :]
+        end
+
+        return sdf
+
+    catch err
+        isa(err, AWSException) && err.code == "NoSuchKey" || throw(err)
+        debug(LOGGER, "S3 object '$s3_key' not found.")
+        return nothing
+    end
 end
 
 function _process_dataframe!(df::DataFrame, metadata::S3DBMeta)
@@ -425,7 +467,7 @@ function _filter_sim_now(
     return selections
 end
 
-# Factorty function to generate a custom-reusable DF filter func
+# Factory function to generate a custom-reusable DF filter func
 function df_filter_factory(
     filters::Union{Nothing,Dict{Symbol,Vector{P}}},
     excludes::Union{Nothing,Dict{Symbol,Vector{Q}}},

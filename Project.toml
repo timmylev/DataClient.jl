@@ -1,7 +1,7 @@
 name = "DataClient"
 uuid = "a002f9d7-5e3f-4b94-9855-5334a24623d7"
 authors = ["InveniaLabs <timothy.levins@invenia.ca>"]
-version = "1.15.1"
+version = "1.16.0"
 
 [deps]
 AWS = "fbe9abb3-538b-5e4e-ba9e-bc94f4f92ebc"
@@ -42,7 +42,7 @@ DataFrames = "1.4.2"
 DataStructures = "0.18"
 Exceptions = "0.1"
 Format = "1.3.2"
-HTTP = "1.6.3"
+HTTP = "1.6"
 JSON = "0.21"
 LRUCache = "1.3.0"
 Memento = "1.4.1"
