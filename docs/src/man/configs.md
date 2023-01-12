@@ -2,7 +2,7 @@
 The config file is a user-defined `.yaml` file that supplies optional configurations to the DataClient.
 A sample config file can be found in [DataClient.jl/configs-example.yaml](https://gitlab.invenia.ca/invenia/Datafeeds/DataClient.jl).
 
-To use one, simply add your configs to a file, name it `configs.yaml`, and place it your current working directory (the `pwd()` of your Julia process).
+To use one, simply add your configs to a file, name it `configs.yaml`, and place it in your current working directory (the `pwd()` of your Julia process or root level of your application).
 This is the default load path the DataClient uses to check for custom configs.
 
 ## How The File is Loaded
@@ -15,7 +15,7 @@ A `reload_backend` call is also required if using a custom config file path that
 ## Configurables
 
 ### Adding Additional Stores
-The optional `additional-stores` config allows you to add any number of additional stores to the DataClient.
+The optional `additional-stores` config allows you to register any number of additional stores to the DataClient such that they can be referenced using a simple store id instead of the full URI.
 For example:
 ```yaml
 additional-stores:

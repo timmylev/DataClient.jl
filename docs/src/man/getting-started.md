@@ -10,10 +10,12 @@ The 4 main APIs that you will be using are:
 
 `DataClient` works by connecting to a target data repository, known as a backend store.
 There are multiple types/implementations of backend stores such as [`DataClient.S3DB`](@ref) and [`DataClient.FFS`](@ref), each having their own characteristics and use cases, though all of them share the same data access APIs.
-An instance of a store must be registered before it can be accessed via the APIs.
+
+An instance of a store that is registered (either as a constant in the package or via a config file) can be referenced directly using its `store_id` while making the API/function calls.
 There are a few centralized stores that are pre-registered as constants in the package (`DataClient.CENTRALIZED_STORES`) which makes them readily accessible.
 Additional user-defined stores can be registered via a simply config file in the user's project directory.
 We cover how to do this in [Inserting Datasets](#Inserting-Datasets) and [Configs and Backend](@ref).
+To access an unregistered store, the store URI must be used as the `store_id`, eg: `s3db:s3://my-s3-bucket-name/prefix_1/`.
 
 The datasets available in each store are grouped by collection, which provides an additional level of dataset namespacing.
 
@@ -39,6 +41,13 @@ Dict{String, Dict{String, Vector{String}}} with 5 entries:
 
 # List every dataset from the 'datafeeds-arrow' store.
 julia> list_datasets("datafeeds-arrow")
+Dict{String, Vector{String}} with 8 entries:
+  "nyiso"   => ["dayahead_load", "dayahead_marketwide", "dayahead_price", "realtime_load", ...
+  "spp"     => ["day_ahead_binding_constraints", "dayahead_load", "dayahead_marketwide", ...
+  ...
+
+# List datasets using a store URI instead of a store id
+julia> list_datasets("s3db:s3://invenia-datafeeds-output/version5/aurora/gz/")
 Dict{String, Vector{String}} with 8 entries:
   "nyiso"   => ["dayahead_load", "dayahead_marketwide", "dayahead_price", "realtime_load", ...
   "spp"     => ["day_ahead_binding_constraints", "dayahead_load", "dayahead_marketwide", ...
