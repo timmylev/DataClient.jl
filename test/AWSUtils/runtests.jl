@@ -2,6 +2,7 @@ using AWSS3: s3_get
 using DataClient.AWSUtils: FileCache, s3_cached_get, s3_list_dirs
 using DataClient.AWSUtils.S3: list_objects_v2
 using DataClient.Configs: reload_configs
+using HTTP
 using TranscodingStreams: transcode
 
 @testset "test src/AWSUtils/s3_cached_get.jl" begin
@@ -155,21 +156,33 @@ using TranscodingStreams: transcode
     end
 
     @testset "test non AWS errors" begin
+        # HTTP.RequestErrors are retried twice
         NON_AWS_ERRORS = Ref(0)
         patch_s3_errors = @patch function s3_get(s3_bucket, s3_key; kwargs...)
             NON_AWS_ERRORS[] += 1
-            return error("non-aws-error")
+            return throw(HTTP.RequestError(nothing, nothing))
         end
 
         apply(patch_s3_errors) do
-            try
-                cached_path = s3_cached_get("bucket", "key")
-            catch err
-            end
-
-            # retried 3 times
-            @test NON_AWS_ERRORS[] == 3
+            @test_throws HTTP.RequestError s3_cached_get("bucket", "key")
         end
+
+        # retried 2 times
+        @test NON_AWS_ERRORS[] == 3
+
+        # non HTTP.RequestErrors are not retried
+        NON_AWS_ERRORS[] = 0
+        patch_s3_errors = @patch function s3_get(s3_bucket, s3_key; kwargs...)
+            NON_AWS_ERRORS[] += 1
+            return error("some other error")
+        end
+
+        apply(patch_s3_errors) do
+            @test_throws ErrorException s3_cached_get("bucket", "key")
+        end
+
+        # no retries
+        @test NON_AWS_ERRORS[] == 1
     end
 end
 

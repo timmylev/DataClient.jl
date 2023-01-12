@@ -60,6 +60,10 @@ using TimeZones: zdt2unix
             expected = collect(range(start_dt, end_dt; step=Hour(1)))
             # show that we're not loading in any unexpected data
             @test isempty(setdiff(loaded, expected))
+
+            # test ntasks=1
+            df2 = _load_s3_files(file_keys, start_dt, end_dt, METADATA; ntasks=1)
+            @test isequal(df, df2)
         end
     end
 
@@ -377,6 +381,23 @@ using TimeZones: zdt2unix
             args = [COLL, DS, start, stop]
             @test_throws MissingDataError(args...) gather(args...)
             @test_throws MissingDataError(args...) gather(args..., "teststore")
+        end
+    end
+
+    @testset "test gather: invalid args" begin
+        patched_load = @patch _load_s3_files(args...; kwargs...) = DataFrame()
+        patched_find = @patch _filter_missing(keys, meta) = Vector{String}()
+
+        apply([patched_load, patched_find, patched_s3_cached_get]) do
+            dt = ZonedDateTime(2020, 1, 1, tz"UTC")
+
+            @test_throws ArgumentError(
+                "The `sim_now` arg is only supported for `S3DB` stores."
+            ) _gather(COLL, DS, dt, dt, FFS("buck", "prex"); sim_now=dt)
+
+            @test_throws ArgumentError("`ntasks` must be positive") _gather(
+                COLL, DS, dt, dt, FFS("buck", "prex"); ntasks=0
+            )
         end
     end
 end

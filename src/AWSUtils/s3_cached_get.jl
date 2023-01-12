@@ -160,24 +160,12 @@ function s3_cached_get(
     get!(cache.dict, cached_path) do
         trace(LOGGER, "Downloading S3 file 's3://$s3_bucket/$s3_key'...")
 
-        data = nothing
-        MAX_ATTEMPTS = 3
-        attempts = 0
-        while true
-            attempts += 1
-            try
-                # the 'retry' kwarg here is for a different type of retry
-                data = @mock s3_get(s3_bucket, s3_key; retry=false)
-                break
-            catch err
-                # Retry for non-AWSExceptions as we sometimes get random HTTP EOF errors
-                # when making the S3 call:
-                # https://gitlab.invenia.ca/invenia/Datafeeds/DataClient.jl/-/issues/20
-                if isa(err, AWSException) || attempts >= MAX_ATTEMPTS
-                    throw(err)
-                end
-            end
-        end
+        # Retry for HTTP.RequestError as we sometimes get random HTTP EOF errors
+        # when making the S3 call:
+        # https://gitlab.invenia.ca/invenia/Datafeeds/DataClient.jl/-/issues/20
+        get_s3_file() = @mock s3_get(s3_bucket, s3_key; retry=false)
+        cond(s, e) = isa(e, HTTP.RequestError)
+        data = retry(get_s3_file; check=cond, delays=ExponentialBackOff(; n=2))()
 
         if !isnothing(codec)
             data = @mock transcode(codec, data)
