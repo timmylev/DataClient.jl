@@ -319,6 +319,16 @@ using TimeZones: zdt2unix
                 # nodes are also filtered
                 @test Set(df.node_name) == Set(nodes)
             end
+
+            @testset "test multiple filter types" begin
+                # Our test filters
+                nodes = ["MPW.MPW", "IPL.AZ", "CSWS", "YAD"]
+                filters = Dict(:node_name => nodes, :mcc => [0])
+
+                df = _gather(coll, ds, start_dt, end_dt, store; filters=filters)
+                @test Set(df.node_name) == Set(nodes)
+                @test Set(df.mcc) == Set([0])
+            end
         end
     end
 
