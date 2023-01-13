@@ -19,10 +19,10 @@ const _S3DB_NON_ID_COLS = [_S3DB_RELEASE_COL, :tag]
         end_dt::ZonedDateTime,
         [store_id::AbstractString,];
         sim_now::Union{ZonedDateTime,Nothing}=nothing,
-        filters::Union{Nothing,Dict{Symbol,Vector{P}}}=nothing,
-        excludes::Union{Nothing,Dict{Symbol,Vector{Q}}}=nothing,
+        filters::Union{Nothing,Dict{Symbol,V}}=nothing,
+        excludes::Union{Nothing,Dict{Symbol,V}}=nothing,
         ntasks::Int=_GATHER_ASYNC_NTASKS,
-    )::DataFrame where {P}
+    )::DataFrame where {V<:Vector}
 
 Gathers data from a target dataset as a `DataFrame`.
 
@@ -99,10 +99,10 @@ function gather(
     start::ZonedDateTime,
     stop::ZonedDateTime;
     sim_now::Union{ZonedDateTime,Nothing}=nothing,
-    filters::Union{Nothing,Dict{Symbol,Vector{P}}}=nothing,
-    excludes::Union{Nothing,Dict{Symbol,Vector{Q}}}=nothing,
+    filters::Union{Nothing,Dict{Symbol,V}}=nothing,
+    excludes::Union{Nothing,Dict{Symbol,V}}=nothing,
     ntasks::Int=_GATHER_ASYNC_NTASKS,
-)::DataFrame where {P,Q}
+)::DataFrame where {V<:Vector}
     # get_backend() returns an OrderedDict, i.e. the search order in configs.yaml
     for (name, store) in pairs(get_backend())
         data = nothing
@@ -138,10 +138,10 @@ function gather(
     end_dt::ZonedDateTime,
     store_id::AbstractString;
     sim_now::Union{ZonedDateTime,Nothing}=nothing,
-    filters::Union{Nothing,Dict{Symbol,Vector{P}}}=nothing,
-    excludes::Union{Nothing,Dict{Symbol,Vector{Q}}}=nothing,
+    filters::Union{Nothing,Dict{Symbol,V}}=nothing,
+    excludes::Union{Nothing,Dict{Symbol,V}}=nothing,
     ntasks::Int=_GATHER_ASYNC_NTASKS,
-)::DataFrame where {P,Q}
+)::DataFrame where {V<:Vector}
     store = get_backend(store_id)
     data = _gather(
         collection,
@@ -169,10 +169,10 @@ function _gather(
     stop::T,
     store::S3Store;
     sim_now::Union{ZonedDateTime,Nothing}=nothing,
-    filters::Union{Nothing,Dict{Symbol,Vector{P}}}=nothing,
-    excludes::Union{Nothing,Dict{Symbol,Vector{Q}}}=nothing,
+    filters::Union{Nothing,Dict{Symbol,V}}=nothing,
+    excludes::Union{Nothing,Dict{Symbol,V}}=nothing,
     ntasks::Int=_GATHER_ASYNC_NTASKS,
-)::DataFrame where {T,P,Q}
+)::DataFrame where {T,V<:Vector}
     if !isnothing(sim_now) && !isa(store, S3DB)
         throw(ArgumentError("The `sim_now` arg is only supported for `S3DB` stores."))
     end
@@ -268,10 +268,10 @@ function _load_s3_files(
     stop::T,
     meta::S3Meta;
     sim_now::Union{ZonedDateTime,Nothing}=nothing,
-    filters::Union{Nothing,Dict{Symbol,Vector{P}}}=nothing,
-    excludes::Union{Nothing,Dict{Symbol,Vector{Q}}}=nothing,
+    filters::Union{Nothing,Dict{Symbol,V}}=nothing,
+    excludes::Union{Nothing,Dict{Symbol,V}}=nothing,
     ntasks::Int=_GATHER_ASYNC_NTASKS,
-)::DataFrame where {T,P,Q}
+)::DataFrame where {T,V<:Vector}
     to = TimerOutput()
     # This will be `nothing` if both `filters` and `excludes` are nothing/empty
     custom_filter = df_filter_factory(filters, excludes)
@@ -470,9 +470,8 @@ end
 
 # Factory function to generate a custom-reusable DF filter func
 function df_filter_factory(
-    filters::Union{Nothing,Dict{Symbol,Vector{P}}},
-    excludes::Union{Nothing,Dict{Symbol,Vector{Q}}},
-) where {P,Q}
+    filters::Union{Nothing,Dict{Symbol,V}}, excludes::Union{Nothing,Dict{Symbol,V}}
+) where {V<:Vector}
     filters = isnothing(filters) ? Dict() : filters
     excludes = isnothing(excludes) ? Dict() : excludes
 
