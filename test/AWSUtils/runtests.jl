@@ -50,29 +50,30 @@ using TranscodingStreams: transcode
         ntasks = 10  # num of times to download the same file
 
         apply(patched_s3_get) do
-            # reset counter
-            CALL_COUNTER[] = 0
-
             # Each file should only be downloaded once, i.e. increment the CALL_COUNTER
             # (for mocked s3_get) by 1 regardless if tasks are run concurrently or not.
 
             # for loop (base case, no concurrency)
+            CALL_COUNTER[] = 0  # reset counter
             [s3_cached_get(bucket, "key_a") for _ in 1:ntasks]
             @test CALL_COUNTER[] == 1
 
             # @thread
+            CALL_COUNTER[] = 0  # reset counter
             @threads for _ in 1:ntasks
                 s3_cached_get(bucket, "key_b")
             end
-            @test CALL_COUNTER[] == 2
+            @test CALL_COUNTER[] == 1
 
             # @spawn
+            CALL_COUNTER[] = 0  # reset counter
             [fetch(i) for i in [@spawn s3_cached_get(bucket, "key_c") for _ in 1:ntasks]]
-            @test CALL_COUNTER[] == 3
+            @test CALL_COUNTER[] == 1
 
             # asyncmap
+            CALL_COUNTER[] = 0  # reset counter
             asyncmap(x -> s3_cached_get(bucket, "key_d"), 1:10)
-            @test CALL_COUNTER[] == 4
+            @test CALL_COUNTER[] == 1
         end
     end
 
