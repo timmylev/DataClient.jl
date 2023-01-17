@@ -16,7 +16,7 @@ using TranscodingStreams: transcode
     patched_s3_get = @patch function s3_get(s3_bucket, s3_key; kwargs...)
         # a small delay to simluation downloading a file, this helps with testing
         # race conditions.
-        sleep(0.2)
+        sleep(0.1)
         CALL_COUNTER[] += 1
         return zeros(UInt8, FILE_SIZE_MB * 1000000)
     end
