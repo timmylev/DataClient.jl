@@ -8,6 +8,8 @@ LOGGER = getlogger(@__MODULE__)
 const CONFIG_PATH = Ref{String}()
 # choosing `nothing` over `#undef` becuase this makes it possible to "unassign" the ref
 const CONFIGS = Ref{Union{Dict{String,Any},Nothing}}(nothing)
+const INIT_CONFIGS_LOCK = ReentrantLock()
+const RELOAD_CONFIGS_LOCK = ReentrantLock()
 
 const CUSTOM_ENVS = [
     ("DATACLIENT_CACHE_DECOMPRESS", Bool)
@@ -22,7 +24,13 @@ function __init__()
 end
 
 function get_configs()
-    return isnothing(CONFIGS[]) ? reload_configs() : CONFIGS[]
+    lock(INIT_CONFIGS_LOCK) do
+        if isnothing(CONFIGS[])
+            reload_configs()
+        end
+    end
+
+    return CONFIGS[]
 end
 
 function set_config_path(path::String)
@@ -37,23 +45,25 @@ end
 function reload_configs()
     cfg_path = CONFIG_PATH[]
 
-    if isfile(cfg_path)
-        CONFIGS[] = YAML.load_file(cfg_path)
-        trace(LOGGER, "Loaded configs $(CONFIGS[]) from file '$cfg_path'.")
-    else
-        trace(LOGGER, "Config file '$cfg_path' is not available, resetting configs.")
-        CONFIGS[] = Dict()
-    end
-
-    # ENVs will override config file
-    for (key, type) in CUSTOM_ENVS
-        if haskey(ENV, key)
-            CONFIGS[][key] = ENV[key]
-            trace(LOGGER, "Loaded ENV '$key' with val $(CONFIGS[][key])")
+    lock(RELOAD_CONFIGS_LOCK) do
+        if isfile(cfg_path)
+            CONFIGS[] = YAML.load_file(cfg_path)
+            trace(LOGGER, "Loaded configs $(CONFIGS[]) from file '$cfg_path'.")
+        else
+            trace(LOGGER, "Config file '$cfg_path' is not available, resetting configs.")
+            CONFIGS[] = Dict()
         end
 
-        if haskey(CONFIGS[], key) && type != typeof(CONFIGS[][key])
-            CONFIGS[][key] = parse(type, CONFIGS[][key])
+        # ENVs will override config file
+        for (key, type) in CUSTOM_ENVS
+            if haskey(ENV, key)
+                CONFIGS[][key] = ENV[key]
+                trace(LOGGER, "Loaded ENV '$key' with val $(CONFIGS[][key])")
+            end
+
+            if haskey(CONFIGS[], key) && type != typeof(CONFIGS[][key])
+                CONFIGS[][key] = parse(type, CONFIGS[][key])
+            end
         end
     end
 

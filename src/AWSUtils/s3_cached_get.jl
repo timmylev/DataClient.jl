@@ -34,7 +34,8 @@ An LRU file cache used by the [`s3_cached_get`](@ref) function.
 """
 struct FileCache
     # This dict stores a mapping of file paths to file sizes in bytes.
-    dict::LRU{String,Int64}
+    file_paths::LRU{String,Int64}
+    file_locks::LRU{String,ReentrantLock}
     dir::String
 end
 
@@ -45,7 +46,7 @@ function FileCache(
 )::FileCache
     del_file(k, v) = rm(k)  # deletes files from disk on expiry
     maxsize_b = maxsize_mb * 1_000_000
-    lru = LRU{String,Int64}(; maxsize=maxsize_b, by=identity, finalizer=del_file)
+    file_paths = LRU{String,Int64}(; maxsize=maxsize_b, by=identity, finalizer=del_file)
 
     if !isnothing(cache_dir)
         cache_dir = mkpath(abspath(normpath(cache_dir)))  # mkpath if not exist
@@ -70,38 +71,51 @@ function FileCache(
 
         # sort by date before reconstructing the LRU
         for file_path in sort!(all_files; by=f -> mtime(f))
-            lru[file_path] = filesize(file_path)
+            file_paths[file_path] = filesize(file_path)
         end
     else
         cache_dir = mktempdir()
     end
 
-    return FileCache(lru, cache_dir)
+    # This LRU has to be as large as the expected max number of concurrent downloads.
+    # While the default ntasks-pre-gather is set to 8, we don't know how many gathers
+    # will be called concurrently, so just set this to a higher number.
+    file_locks = LRU{String,ReentrantLock}(; maxsize=1000)
+
+    return FileCache(file_paths, file_locks, cache_dir)
 end
 
 # the default cache that is used by the `s3_cached_get` function when a custom cache
 # is not provided.
 const _DEFAULT_CACHE = Ref{Union{FileCache,Nothing}}(nothing)
+const _DEFAULT_CACHE_LOCK = ReentrantLock()
 
 unset_global_cache() = _DEFAULT_CACHE[] = nothing
 
 function get_global_cache()::FileCache
-    if isnothing(_DEFAULT_CACHE[])
-        configs = Configs.get_configs()
-        cache_dir = get(configs, "DATACLIENT_CACHE_DIR", nothing)
-        cache_size = get(configs, "DATACLIENT_CACHE_SIZE_MB", _DEFAULT_CACHE_SIZE_MB)
-        cache_ttl = Day(
-            get(configs, "DATACLIENT_CACHE_EXPIRE_AFTER_DAYS", _DEFAULT_CACHE_EXPIRY_DAYS)
-        )
+    lock(_DEFAULT_CACHE_LOCK) do
+        if isnothing(_DEFAULT_CACHE[])
+            trace(LOGGER, "Instantiating global FileCache...")
+            configs = Configs.get_configs()
+            cache_dir = get(configs, "DATACLIENT_CACHE_DIR", nothing)
+            cache_size = get(configs, "DATACLIENT_CACHE_SIZE_MB", _DEFAULT_CACHE_SIZE_MB)
+            cache_ttl = Day(
+                get(
+                    configs,
+                    "DATACLIENT_CACHE_EXPIRE_AFTER_DAYS",
+                    _DEFAULT_CACHE_EXPIRY_DAYS,
+                ),
+            )
 
-        if !isnothing(cache_dir)
-            cache_dir = abspath(normpath(cache_dir))
-            info(LOGGER, "Using persistent cache dir '$cache_dir'")
+            if !isnothing(cache_dir)
+                cache_dir = abspath(normpath(cache_dir))
+                info(LOGGER, "Using persistent cache dir '$cache_dir'")
+            end
+
+            _DEFAULT_CACHE[] = FileCache(
+                cache_size; cache_dir=cache_dir, cache_dir_ttl=cache_ttl
+            )
         end
-
-        _DEFAULT_CACHE[] = FileCache(
-            cache_size; cache_dir=cache_dir, cache_dir_ttl=cache_ttl
-        )
     end
 
     return _DEFAULT_CACHE[]
@@ -157,27 +171,48 @@ function s3_cached_get(
     cached_suffix = isnothing(codec) ? s3_key : splitext(s3_key)[1]
     cached_path = joinpath(cache.dir, s3_bucket, cached_suffix)
 
-    get!(cache.dict, cached_path) do
-        trace(LOGGER, "Downloading S3 file 's3://$s3_bucket/$s3_key'...")
+    # Generate a unique Lock for the file based on the file path.
+    file_lock = get!(() -> ReentrantLock(), cache.file_locks, cached_path)
 
-        # Retry for HTTP.RequestError as we sometimes get random HTTP EOF errors
-        # when making the S3 call:
-        # https://gitlab.invenia.ca/invenia/Datafeeds/DataClient.jl/-/issues/20
-        get_s3_file() = @mock s3_get(s3_bucket, s3_key; retry=false)
-        cond(s, e) = isa(e, HTTP.RequestError)
-        data = retry(get_s3_file; check=cond, delays=ExponentialBackOff(; n=2))()
-
-        if !isnothing(codec)
-            data = @mock transcode(codec, data)
+    # The following operation may result in a file download if it hasn't been cached.
+    # So, aquire the file lock first to avoid concurrent downloads of the same file.
+    # Concurrent downloads of the same file is problematic because it may result in
+    # task_a reading the file from the local path because the download has been completed,
+    # not knowing that task_b has overridden the path by a download that is still on-going,
+    # leading to task_a reading an incomplete file.
+    lock(file_lock) do
+        # Note that LRUCache.get! only locks accessor methods to the undelying dict,
+        # not the entire do-block. This is good because we still want to allow concurrent
+        # downloads of different files (while dis-allowing concurrent downloads of the
+        # same file). This is also why we needed the preceeding file_lock.
+        get!(cache.file_paths, cached_path) do
+            _download_s3_file(s3_bucket, s3_key, cached_path, codec)
         end
-
-        mkpath(dirname(cached_path))
-        open(cached_path, "w") do fp
-            write(fp, data)
-        end
-
-        filesize(cached_path)  # LRU dict value, keeps track of cache size.
     end
 
     return cached_path
+end
+
+function _download_s3_file(
+    s3_bucket::String, s3_key::String, local_path::String, decompression_codec
+)::Int
+    trace(LOGGER, "Downloading S3 file 's3://$s3_bucket/$s3_key'...")
+
+    # Retry for HTTP.RequestError as we sometimes get random HTTP EOF errors
+    # when making the S3 call:
+    # https://gitlab.invenia.ca/invenia/Datafeeds/DataClient.jl/-/issues/20
+    get_s3_file() = @mock s3_get(s3_bucket, s3_key; retry=false)
+    cond(s, e) = isa(e, HTTP.RequestError)
+    data = retry(get_s3_file; check=cond, delays=ExponentialBackOff(; n=2))()
+
+    if !isnothing(decompression_codec)
+        data = @mock transcode(decompression_codec, data)
+    end
+
+    mkpath(dirname(local_path))
+    open(local_path, "w") do fp
+        write(fp, data)
+    end
+
+    return filesize(local_path)  # LRU cache.file_paths value, keeps track of cache size.
 end

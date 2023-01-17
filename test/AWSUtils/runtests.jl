@@ -1,3 +1,5 @@
+using Base.Threads: @threads, @spawn
+
 using AWSS3: s3_get
 using DataClient.AWSUtils: FileCache, s3_cached_get, s3_list_dirs
 using DataClient.AWSUtils.S3: list_objects_v2
@@ -12,6 +14,9 @@ using TranscodingStreams: transcode
     FILE_SIZE_MB = 2
     CALL_COUNTER = Ref(0)
     patched_s3_get = @patch function s3_get(s3_bucket, s3_key; kwargs...)
+        # a small delay to simulate downloading a file, this helps with testing
+        # race conditions more effectively.
+        sleep(0.1)
         CALL_COUNTER[] += 1
         return zeros(UInt8, FILE_SIZE_MB * 1000000)
     end
@@ -37,6 +42,38 @@ using TranscodingStreams: transcode
             # downloading 'file_1.txt' from a different bucket, s3_get() is called
             stream = s3_cached_get("test-bucket-2", "file_1.txt")
             @test CALL_COUNTER[] == 3
+        end
+    end
+
+    @testset "test downloading the same file concurrently" begin
+        bucket = "test-bucket-1"
+        ntasks = 10  # num of times to download the same file
+
+        apply(patched_s3_get) do
+            # Each file should only be downloaded once, i.e. increment the CALL_COUNTER
+            # (for mocked s3_get) by 1 regardless if tasks are run concurrently or not.
+
+            # for loop (base case, no concurrency)
+            CALL_COUNTER[] = 0  # reset counter
+            [s3_cached_get(bucket, "key_a") for _ in 1:ntasks]
+            @test CALL_COUNTER[] == 1
+
+            # @thread
+            CALL_COUNTER[] = 0  # reset counter
+            @threads for _ in 1:ntasks
+                s3_cached_get(bucket, "key_b")
+            end
+            @test CALL_COUNTER[] == 1
+
+            # @spawn
+            CALL_COUNTER[] = 0  # reset counter
+            [fetch(i) for i in [@spawn s3_cached_get(bucket, "key_c") for _ in 1:ntasks]]
+            @test CALL_COUNTER[] == 1
+
+            # asyncmap
+            CALL_COUNTER[] = 0  # reset counter
+            asyncmap(x -> s3_cached_get(bucket, "key_d"), 1:10)
+            @test CALL_COUNTER[] == 1
         end
     end
 
