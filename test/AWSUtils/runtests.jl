@@ -1,3 +1,5 @@
+using Base.Threads: @threads, @spawn
+
 using AWSS3: s3_get
 using DataClient.AWSUtils: FileCache, s3_cached_get, s3_list_dirs
 using DataClient.AWSUtils.S3: list_objects_v2
@@ -37,6 +39,36 @@ using TranscodingStreams: transcode
             # downloading 'file_1.txt' from a different bucket, s3_get() is called
             stream = s3_cached_get("test-bucket-2", "file_1.txt")
             @test CALL_COUNTER[] == 3
+        end
+    end
+
+    @testset "test downloading the same file concurrently" begin
+        bucket = "test-bucket-1"
+        ntasks = 10
+
+        apply(patched_s3_get) do
+            CALL_COUNTER[] = 0
+
+            # Each file should only be downloaded once, i.e. increment the CALL_COUNTER
+            # (for mocked s3_get) by 1 regardless if tasks are run concurrently or not.
+
+            # for loop (base case, no concurrency)
+            [s3_cached_get(bucket, "key_a") for _ in 1:ntasks]
+            @test CALL_COUNTER[] == 1
+
+            # @thread
+            @threads for _ in 1:ntasks
+                s3_cached_get(bucket, "key_b")
+            end
+            @test CALL_COUNTER[] == 2
+
+            # @spawn
+            [fetch(i) for i in [@spawn s3_cached_get(bucket, "key_c") for _ in 1:ntasks]]
+            @test CALL_COUNTER[] == 3
+
+            # asyncmap
+            asyncmap(x -> s3_cached_get(bucket, "key_d"), 1:10)
+            @test CALL_COUNTER[] == 4
         end
     end
 

@@ -165,10 +165,11 @@ function s3_cached_get(
     file_lock = get!(cache.file_locks, cached_path, ReentrantLock())
 
     # The following operation may result in a file download if it hasn't been cached.
-    # So, aquire the file lock first to avoid concurrent/duplicate downloads of the same
-    # file. Concurrent/duplicate downloads are dangerous becuase newer downloads that
-    # hasn't completed will override a previous-completed download, and this is problematic
-    # for whatever process that is reading the file thinking the file is compelte.
+    # So, aquire the file lock first to avoid concurrent downloads of the same file.
+    # Concurrent downloads of the same file is problematic because it may result in
+    # task_a reading the file from the local path because the download has been completed,
+    # not knowing that task_b has overridden the path by a download that is still on-going,
+    # leading to task_a reading an incomplete file.
     lock(file_lock) do
         # Note that LRUCache.get! only locks accessor methods to the undelying dict,
         # not the entire do-block. This is good because we still want to allow concurrent
