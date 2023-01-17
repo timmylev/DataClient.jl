@@ -164,7 +164,7 @@ function s3_cached_get(
     cached_path = joinpath(cache.dir, s3_bucket, cached_suffix)
 
     # Generate a unique Lock for the file based on the file path.
-    file_lock = get!(cache.file_locks, cached_path, ReentrantLock())
+    file_lock = get!(() -> ReentrantLock(), cache.file_locks, cached_path)
 
     # The following operation may result in a file download if it hasn't been cached.
     # So, aquire the file lock first to avoid concurrent downloads of the same file.
