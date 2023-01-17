@@ -77,10 +77,10 @@ function FileCache(
         cache_dir = mktempdir()
     end
 
-    # This LRU only has to be as large as the expected max number of concurrent
-    # downloads, and we don't expect there to be > 100 concurrent downloads. The
-    # default ntasks value for the package is only 8.
-    file_locks = LRU{String,ReentrantLock}(; maxsize=100)
+    # This LRU has to be as large as the expected max number of concurrent downloads.
+    # While the default ntasks-pre-gather is set to 8, we don't know how many gathers
+    # will be called concurrently, so just set this to a higher number.
+    file_locks = LRU{String,ReentrantLock}(; maxsize=1000)
 
     return FileCache(file_paths, file_locks, cache_dir)
 end
@@ -88,26 +88,34 @@ end
 # the default cache that is used by the `s3_cached_get` function when a custom cache
 # is not provided.
 const _DEFAULT_CACHE = Ref{Union{FileCache,Nothing}}(nothing)
+const _DEFAULT_CACHE_LOCK = ReentrantLock()
 
 unset_global_cache() = _DEFAULT_CACHE[] = nothing
 
 function get_global_cache()::FileCache
-    if isnothing(_DEFAULT_CACHE[])
-        configs = Configs.get_configs()
-        cache_dir = get(configs, "DATACLIENT_CACHE_DIR", nothing)
-        cache_size = get(configs, "DATACLIENT_CACHE_SIZE_MB", _DEFAULT_CACHE_SIZE_MB)
-        cache_ttl = Day(
-            get(configs, "DATACLIENT_CACHE_EXPIRE_AFTER_DAYS", _DEFAULT_CACHE_EXPIRY_DAYS)
-        )
+    lock(_DEFAULT_CACHE_LOCK) do
+        if isnothing(_DEFAULT_CACHE[])
+            trace(LOGGER, "Instantiating global FileCache...")
+            configs = Configs.get_configs()
+            cache_dir = get(configs, "DATACLIENT_CACHE_DIR", nothing)
+            cache_size = get(configs, "DATACLIENT_CACHE_SIZE_MB", _DEFAULT_CACHE_SIZE_MB)
+            cache_ttl = Day(
+                get(
+                    configs,
+                    "DATACLIENT_CACHE_EXPIRE_AFTER_DAYS",
+                    _DEFAULT_CACHE_EXPIRY_DAYS,
+                ),
+            )
 
-        if !isnothing(cache_dir)
-            cache_dir = abspath(normpath(cache_dir))
-            info(LOGGER, "Using persistent cache dir '$cache_dir'")
+            if !isnothing(cache_dir)
+                cache_dir = abspath(normpath(cache_dir))
+                info(LOGGER, "Using persistent cache dir '$cache_dir'")
+            end
+
+            _DEFAULT_CACHE[] = FileCache(
+                cache_size; cache_dir=cache_dir, cache_dir_ttl=cache_ttl
+            )
         end
-
-        _DEFAULT_CACHE[] = FileCache(
-            cache_size; cache_dir=cache_dir, cache_dir_ttl=cache_ttl
-        )
     end
 
     return _DEFAULT_CACHE[]

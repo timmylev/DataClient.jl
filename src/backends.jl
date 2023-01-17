@@ -1,4 +1,5 @@
 const BACKENDS = Ref{OrderedDict{String,Store}}(OrderedDict())
+const BACKENDS_LOCK = ReentrantLock()
 
 """
     reload_backend()
@@ -28,40 +29,42 @@ Gets available backend store(s).
 Refer to [Configs and Backend](@ref) for more info about backend stores.
 """
 function get_backend()::OrderedDict{String,Store}
-    if isempty(BACKENDS[])
-        cfg = Configs.get_configs()
-        load_order = if haskey(cfg, "additional-stores")
-            stores = [collect(d)[1] for d in cfg["additional-stores"]]
-            if get(cfg, "disable-centralized", false)
-                [stores]
-            elseif get(cfg, "prioritize-additional-stores", false)
-                [stores, CENTRALIZED_STORES]
+    lock(BACKENDS_LOCK) do
+        if isempty(BACKENDS[])
+            cfg = Configs.get_configs()
+            load_order = if haskey(cfg, "additional-stores")
+                stores = [collect(d)[1] for d in cfg["additional-stores"]]
+                if get(cfg, "disable-centralized", false)
+                    [stores]
+                elseif get(cfg, "prioritize-additional-stores", false)
+                    [stores, CENTRALIZED_STORES]
+                else
+                    [CENTRALIZED_STORES, stores]
+                end
             else
-                [CENTRALIZED_STORES, stores]
-            end
-        else
-            if get(cfg, "disable-centralized", false)
-                throw(
-                    ConfigFileError(
-                        "Do not set `disable-centralized: True` in the config file " *
-                        "when no `additional-stores` are defined.",
-                    ),
-                )
-            else
-                [CENTRALIZED_STORES]
-            end
-        end
-
-        for stores in load_order
-            for (name, uri) in stores
-                if !haskey(BACKENDS[], name)
-                    global BACKENDS[][name] = _parse_backend_path(uri)
+                if get(cfg, "disable-centralized", false)
+                    throw(
+                        ConfigFileError(
+                            "Do not set `disable-centralized: True` in the config file " *
+                            "when no `additional-stores` are defined.",
+                        ),
+                    )
+                else
+                    [CENTRALIZED_STORES]
                 end
             end
-        end
 
-        ids = keys(BACKENDS[])
-        debug(LOGGER, "Loaded $(length(ids)) backend store(s): $(ids).")
+            for stores in load_order
+                for (name, uri) in stores
+                    if !haskey(BACKENDS[], name)
+                        global BACKENDS[][name] = _parse_backend_path(uri)
+                    end
+                end
+            end
+
+            ids = keys(BACKENDS[])
+            debug(LOGGER, "Loaded $(length(ids)) backend store(s): $(ids).")
+        end
     end
 
     return BACKENDS[]
