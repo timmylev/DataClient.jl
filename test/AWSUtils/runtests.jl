@@ -14,8 +14,8 @@ using TranscodingStreams: transcode
     FILE_SIZE_MB = 2
     CALL_COUNTER = Ref(0)
     patched_s3_get = @patch function s3_get(s3_bucket, s3_key; kwargs...)
-        # a small delay to simluation downloading a file, this helps with testing
-        # race conditions.
+        # a small delay to simulate downloading a file, this helps with testing
+        # race conditions more effectively.
         sleep(0.1)
         CALL_COUNTER[] += 1
         return zeros(UInt8, FILE_SIZE_MB * 1000000)
@@ -47,9 +47,10 @@ using TranscodingStreams: transcode
 
     @testset "test downloading the same file concurrently" begin
         bucket = "test-bucket-1"
-        ntasks = 10
+        ntasks = 10  # num of times to download the same file
 
         apply(patched_s3_get) do
+            # reset counter
             CALL_COUNTER[] = 0
 
             # Each file should only be downloaded once, i.e. increment the CALL_COUNTER
