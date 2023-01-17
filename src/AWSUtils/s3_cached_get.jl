@@ -214,5 +214,5 @@ function _download_s3_file(
         write(fp, data)
     end
 
-    return filesize(local_path)
+    return filesize(local_path)  # LRU cache.file_paths value, keeps track of cache size.
 end
