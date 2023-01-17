@@ -77,8 +77,10 @@ function FileCache(
         cache_dir = mktempdir()
     end
 
-    max_concurrent_downloads = 100
-    file_locks = LRU{String,ReentrantLock}(; maxsize=max_concurrent_downloads)
+    # This LRU only has to be as large as the expected max number of concurrent
+    # downloads, and we don't expect there to be > 100 concurrent downloads. The
+    # default ntasks value for the package is only 8.
+    file_locks = LRU{String,ReentrantLock}(; maxsize=100)
 
     return FileCache(file_paths, file_locks, cache_dir)
 end
