@@ -381,8 +381,8 @@ function _load_s3_file(
     end
 end
 
-_unix_parser(::Type{ZonedDateTime}, meta::S3DBMeta) = ts -> unix2zdt(ts, meta.timezone)
-_unix_parser(::Type{UTCDateTime}, meta::S3DBMeta) = ts -> UTCDateTime(unix2datetime(ts))
+_unix_parser(::Type{ZonedDateTime}, m::S3DBMeta) = t::Int -> unix2zdt(t, m.timezone)
+_unix_parser(::Type{UTCDateTime}, m::S3DBMeta) = t::Int -> UTCDateTime(unix2datetime(t))
 
 function _process_dataframe!(
     df::DataFrame, metadata::S3DBMeta; dt_type::Type{<:Dates.AbstractDateTime}=ZonedDateTime
