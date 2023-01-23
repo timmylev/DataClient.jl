@@ -16,6 +16,7 @@ using Mocking
 using TimeZones
 using TimerOutputs
 using TranscodingStreams
+using UTCDateTimes
 using WeakRefStrings
 using YAML
 
@@ -43,7 +44,7 @@ const CENTRALIZED_STORES = OrderedDict{String,String}(
     "public-data" => "ffs:s3://invenia-private-datasets/DataClient/ffs/arrow/zst/",
     "ercot-nda" => "ffs:s3://invenia-ercot-nda-mw6ez7cwz9gtdqw1qejn81bfkdwdouse1a-s3alias/derived_works/DataClient/ffs/arrow/zst/",
     "miso-nda" => "ffs:s3://invenia-miso-nda-5twngkbmrczu6xd9uppda18b5995yuse1a-s3alias/derived_works/DataClient/ffs/arrow/zst/",
-    "snapshots" => "s3db-arrow-zst-day:s3://invenia-common/research-datasets/DataClient/snapshots/"
+    "snapshots" => "s3db-arrow-zst-day:s3://invenia-common/research-datasets/DataClient/snapshots/",
 )
 # https://gitlab.invenia.ca/invenia/TabularDataSchema/-/blob/master/versions/2017-05-02_001.md
 const BOUNDS = Dict{Int,String3}(0 => "()", 1 => "[)", 2 => "(]", 3 => "[]")

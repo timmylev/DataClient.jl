@@ -18,6 +18,7 @@ using Dates
 using JSON
 using TimeZones
 using TimeZones: zdt2unix
+using UTCDateTimes
 
 @testset "test src/gather.jl" begin
     # load in the test configs
@@ -118,6 +119,8 @@ using TimeZones: zdt2unix
             "multi_hour" => [0, 0, 1],
         )
 
+        df_copy = copy(df)
+
         coll, ds = "datasoup", "ercot_da_gen_ancillary_offers"
         store = S3DB("test-bucket", "test-s3db")
         metadata = apply(patched_s3_cached_get) do
@@ -125,11 +128,22 @@ using TimeZones: zdt2unix
         end
 
         _process_dataframe!(df, metadata)
+        _process_dataframe!(df_copy, metadata; dt_type=UTCDateTime)
 
         # show that zdts are decoded
+        @test eltype(df.target_start) == ZonedDateTime
+        @test eltype(df.target_end) == ZonedDateTime
+        @test eltype(df.release_date) == ZonedDateTime
         @test df.target_start == zdts
         @test df.target_end == zdts
         @test df.release_date == zdts
+        # Show that UTCDateTime parsing works
+        @test eltype(df_copy.target_start) == UTCDateTime
+        @test eltype(df_copy.target_end) == UTCDateTime
+        @test eltype(df_copy.release_date) == UTCDateTime
+        @test df_copy.target_start == df.target_start
+        @test df_copy.target_end == df.target_end
+        @test df_copy.release_date == df.release_date
         # show that bounds are decoded
         @test df.target_bounds == [DataClient.BOUNDS[b] for b in bounds]
         # show that list_types are decoded correctly
@@ -144,6 +158,14 @@ using TimeZones: zdt2unix
         @test timezone(first(df).target_start) == DataClient.get_tz(coll, ds)
         @test timezone(first(df).target_end) == DataClient.get_tz(coll, ds)
         @test timezone(first(df).release_date) == DataClient.get_tz(coll, ds)
+
+        # show that UTCDateTimes works
+        @test eltype(df_copy.target_start) == UTCDateTime
+        @test df_copy.target_start == df.target_start
+        @test eltype(df_copy.target_end) == UTCDateTime
+        @test df_copy.target_end == df.target_end
+        @test eltype(df_copy.release_date) == UTCDateTime
+        @test df_copy.release_date == df.release_date
     end
 
     @testset "test _process_dataframe! FFS" begin
