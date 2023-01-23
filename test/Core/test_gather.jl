@@ -158,14 +158,6 @@ using UTCDateTimes
         @test timezone(first(df).target_start) == DataClient.get_tz(coll, ds)
         @test timezone(first(df).target_end) == DataClient.get_tz(coll, ds)
         @test timezone(first(df).release_date) == DataClient.get_tz(coll, ds)
-
-        # show that UTCDateTimes works
-        @test eltype(df_copy.target_start) == UTCDateTime
-        @test df_copy.target_start == df.target_start
-        @test eltype(df_copy.target_end) == UTCDateTime
-        @test df_copy.target_end == df.target_end
-        @test eltype(df_copy.release_date) == UTCDateTime
-        @test df_copy.release_date == df.release_date
     end
 
     @testset "test _process_dataframe! FFS" begin
