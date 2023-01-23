@@ -15,10 +15,10 @@ const _S3DB_NON_ID_COLS = [_S3DB_RELEASE_COL, :tag]
     gather(
         collection::AbstractString,
         dataset::AbstractString,
-        start_dt::ZonedDateTime,
-        end_dt::ZonedDateTime,
+        start_dt::Union{ZonedDateTime,UTCDateTime},
+        end_dt::Union{ZonedDateTime,UTCDateTime},
         [store_id::AbstractString,];
-        sim_now::Union{ZonedDateTime,Nothing}=nothing,
+        sim_now::Union{ZonedDateTime,UTCDateTime,Nothing}=nothing,
         filters::Union{Nothing,Dict{Symbol,<:AbstractVector}}=nothing,
         excludes::Union{Nothing,Dict{Symbol,<:AbstractVector}}=nothing,
         dt_type::Type{<:Dates.AbstractDateTime}=ZonedDateTime,
@@ -49,9 +49,9 @@ Gathers data from a target dataset as a `DataFrame`.
     when compared to just using the `sim_now` filter alone.
 - `excludes`: (Optional) This works in a similar but opposite way to the `filters` kwarg,
     it EXCLUDES any rows with matching column values.
-- `dt_type`: (Optional) The return type for datetime fields of S3DB data (`target_start`,
-    `target_end`, `release_date`). This is only supported for [`S3DB`](@ref) stores. The
-    default is `ZonedDateTime`.
+- `dt_type`: (Optional) The return type for datetime fields (`target_start`, `target_end`,
+    `release_date`) of S3DB data. This is only supported for [`S3DB`](@ref) stores. Options
+    are `ZonedDateTime` and `UTCDateTime`, with `ZonedDateTime` as the default.
 - `ntasks`: (Optional) The number of tasks to run concurrently when downloading and
     processing s3 files, defaults to $_GATHER_ASYNC_NTASKS. Each task is run using Threads.@spawn, so
     multi-threading will take effect if enabled. Setting this to 1 will disable asynchrony
@@ -100,9 +100,9 @@ default cache behaviour. Refer to [`AWSUtils.s3_cached_get`](@ref) and
 function gather(
     collection::AbstractString,
     dataset::AbstractString,
-    start::ZonedDateTime,
-    stop::ZonedDateTime;
-    sim_now::Union{ZonedDateTime,Nothing}=nothing,
+    start::Union{ZonedDateTime,UTCDateTime},
+    stop::Union{ZonedDateTime,UTCDateTime};
+    sim_now::Union{ZonedDateTime,UTCDateTime,Nothing}=nothing,
     filters::Union{Nothing,Dict{Symbol,<:AbstractVector}}=nothing,
     excludes::Union{Nothing,Dict{Symbol,<:AbstractVector}}=nothing,
     dt_type::Type{<:Dates.AbstractDateTime}=ZonedDateTime,
@@ -116,10 +116,10 @@ function gather(
             data = _gather(
                 collection,
                 dataset,
-                start,
-                stop,
+                isa(start, UTCDateTime) ? ZonedDateTime(start) : start,
+                isa(stop, UTCDateTime) ? ZonedDateTime(stop) : stop,
                 store;
-                sim_now=sim_now,
+                sim_now=isa(sim_now, UTCDateTime) ? ZonedDateTime(sim_now) : sim_now,
                 filters=filters,
                 excludes=excludes,
                 dt_type=dt_type,
@@ -140,10 +140,10 @@ end
 function gather(
     collection::AbstractString,
     dataset::AbstractString,
-    start_dt::ZonedDateTime,
-    end_dt::ZonedDateTime,
+    start_dt::Union{ZonedDateTime,UTCDateTime},
+    end_dt::Union{ZonedDateTime,UTCDateTime},
     store_id::AbstractString;
-    sim_now::Union{ZonedDateTime,Nothing}=nothing,
+    sim_now::Union{ZonedDateTime,UTCDateTime,Nothing}=nothing,
     filters::Union{Nothing,Dict{Symbol,<:AbstractVector}}=nothing,
     excludes::Union{Nothing,Dict{Symbol,<:AbstractVector}}=nothing,
     dt_type::Type{<:Dates.AbstractDateTime}=ZonedDateTime,
@@ -153,10 +153,10 @@ function gather(
     data = _gather(
         collection,
         dataset,
-        start_dt,
-        end_dt,
+        isa(start_dt, UTCDateTime) ? ZonedDateTime(start_dt) : start_dt,
+        isa(end_dt, UTCDateTime) ? ZonedDateTime(end_dt) : end_dt,
         store;
-        sim_now=sim_now,
+        sim_now=isa(sim_now, UTCDateTime) ? ZonedDateTime(sim_now) : sim_now,
         filters=filters,
         excludes=excludes,
         dt_type=dt_type,
