@@ -13,9 +13,10 @@ There are multiple types/implementations of backend stores such as [`DataClient.
 
 An instance of a store that is registered (either as a constant in the package or via a config file) can be referenced directly using its `store_id` while making the API/function calls.
 There are a few centralized stores that are pre-registered as constants in the package (`DataClient.CENTRALIZED_STORES`) which makes them readily accessible.
-Additional user-defined stores can be registered via a simply config file in the user's project directory.
+Additional user-defined stores can be registered via a simple config file in the user's project directory.
 We cover how to do this in [Inserting Datasets](#Inserting-Datasets) and [Configs and Backend](@ref).
-To access an unregistered store, the store URI must be used as the `store_id`, eg: `s3db:s3://my-s3-bucket-name/prefix_1/`.
+
+To access a store directly without first registering/associating it with a store_id, the store URI must be used in place of the `store_id` argument in API calls, eg: `list_datasets("s3db:s3://my-s3-bucket-name/prefix_1/")`.
 
 The datasets available in each store are grouped by collection, which provides an additional level of dataset namespacing.
 
@@ -88,6 +89,11 @@ julia> df = gather("spp", "realtime_price", start, stop)
 # Specifically queries the 'datafeeds-arrow' backend store.
 julia> df = gather("spp", "realtime_price", start, stop, "datafeeds-arrow")
 71496×9 DataFrame
+
+# Query an unregistered store directly using its URI.
+julia> URI = "s3db-arrow-zst-day:s3://invenia-common/S3DBTest/datasets/2023-01-13/version5/arrow/zst_lv22/day/"
+julia> df = gather("pjm", "realtime_price", start, stop, URI)
+45264×11 DataFrame
 ```
 For gathering S3DB data, we recommend using the backend store `datafeeds-arrow` over `datafeeds` for a ~x2.5 performance boost.
 The `datafeeds` store is the direct output of the DataFeeds [Transmuter](https://gitlab.invenia.ca/invenia/Datafeeds/Transmuters), which produces `csv.gz`-formatted files.
