@@ -30,9 +30,9 @@ Notice that the store URI is prefixed with a storage type and we currently only 
 
 The order in which you specify the additional stores is important because **this is the same order that the [`gather`](@ref) operation uses to search for datasets** when a store id is not provided.
 
-#### S3DB URI Schemeq
-The first component of `FFS` store URIs always begin with `ffs:`, but this is not the case for `S3DB` stores.
-Given that DataClient has no control over how `S3DB` data is stored/formatted nor what metadata is made available, certain information about the store must be provided in the URI in order for data to be read correctly, in particular, the file format, compression format, and partition size.
+#### S3DB URI Scheme
+The first component of `FFS` store URIs always begins with `ffs:`, but this is not the case with `S3DB` store URIs.
+Given that DataClient has no control over how `S3DB` data is stored/formatted nor what metadata is made available, certain information about the store must be provided in the URI in order for data to be read/processed correctly. Specifically, the file format, compression, and partition size of the stored data must be baked into the URI.
 The following are some valid examples:
 * `s3db:`: A shorthand for `s3db-csv-gz-day`
 * `s3db-arrow-zst-day:`
