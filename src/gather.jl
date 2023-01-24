@@ -113,7 +113,7 @@ function gather(
         data = nothing
 
         try
-            data = _gather(
+            data = @mock _gather(
                 collection,
                 dataset,
                 isa(start, UTCDateTime) ? ZonedDateTime(start) : start,
@@ -150,7 +150,7 @@ function gather(
     ntasks::Int=_GATHER_ASYNC_NTASKS,
 )::DataFrame
     store = get_backend(store_id)
-    data = _gather(
+    data = @mock _gather(
         collection,
         dataset,
         isa(start_dt, UTCDateTime) ? ZonedDateTime(start_dt) : start_dt,

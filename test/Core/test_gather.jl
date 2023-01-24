@@ -4,6 +4,7 @@ using DataClient:
     FFSMeta,
     MissingDataError,
     S3DB,
+    S3Store,
     _filter_missing,
     _gather,
     _load_s3_files,
@@ -405,6 +406,29 @@ using UTCDateTimes
             args = [COLL, DS, start, stop]
             @test_throws MissingDataError(args...) gather(args...)
             @test_throws MissingDataError(args...) gather(args..., "teststore")
+        end
+    end
+
+    @testset "test gather: UTCDateTime" begin
+        # patch the inner _gather() call to inspect the args it is called with
+        CALLED_WITH = Dict{String,Any}()
+        inner_gather = @patch function _gather(args...; kwargs...)
+            CALLED_WITH["args"] = args
+            CALLED_WITH["kwargs"] = Dict(kwargs)
+            return DataFrame("target_start" => [ZonedDateTime(2020, 1, 1, 1, tz"UTC")])
+        end
+
+        apply([inner_gather]) do
+            start = UTCDateTime(2020, 1, 1)
+            stop = UTCDateTime(2020, 2, 1)
+            gather(COLL, DS, start, stop, "teststore"; sim_now=stop)
+            # test that the `ZonedDateTime`s are correctly converted into `UTCDateTime`s
+            @test typeof(CALLED_WITH["args"][3]) == ZonedDateTime
+            @test CALLED_WITH["args"][3] == start
+            @test typeof(CALLED_WITH["args"][4]) == ZonedDateTime
+            @test CALLED_WITH["args"][4] == stop
+            @test typeof(CALLED_WITH["kwargs"][:sim_now]) == ZonedDateTime
+            @test CALLED_WITH["kwargs"][:sim_now] == stop
         end
     end
 
