@@ -422,7 +422,8 @@ using UTCDateTimes
             start = UTCDateTime(2020, 1, 1)
             stop = UTCDateTime(2020, 2, 1)
             gather(COLL, DS, start, stop, "teststore"; sim_now=stop)
-            # test that the `ZonedDateTime`s are correctly converted into `UTCDateTime`s
+            # Show that the`UTCDateTime`s are correctly converted into `ZonedDateTime`s
+            # before calling the inner _gather()
             @test typeof(CALLED_WITH["args"][3]) == ZonedDateTime
             @test CALLED_WITH["args"][3] == start
             @test typeof(CALLED_WITH["args"][4]) == ZonedDateTime
