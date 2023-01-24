@@ -8,13 +8,13 @@ This is the default load path the DataClient uses to check for custom configs.
 ## How The File is Loaded
 The config file is loaded in automatically when any of the supported operations are called ([`get_backend`](@ref), [`list_datasets`](@ref), [`gather`](@ref), and [`insert`](@ref)).
 Once loaded in for the first time, it is cached in memory for future use.
-So, making manual changes to the config file will not take immediate effect unless the Julia session is restarted or [`reload_backend`](@ref) is called.
+So, making manual changes to the config file will not take immediate effect unless the Julia session is restarted or [`reload_backend`](@ref) is called (which in turn calls `DataClient.Configs.reload_configs()` in the background).
 
 A `reload_backend` call is also required if using a custom config file path that is not `joinpath(pwd(), "configs.yaml")`.
 
 ## Configurables
 
-### Adding Additional Stores
+### Adding Additional Backend Stores
 The optional `additional-stores` config allows you to register any number of additional stores to the DataClient such that they can be referenced using a simple store id instead of the full URI.
 For example:
 ```yaml
@@ -25,10 +25,22 @@ additional-stores:
   - staging-datafeeds: s3db:s3://datafeeds-staging-bucket/bucket-prefix/
 ```
 Notice that the store URI is prefixed with a storage type and we currently only support two storage types:
-- `s3db` : [`DataClient.S3DB`](@ref) is used for storage locations that contain data that is transmuted by Datafeeds. This store type is read-only thus you will not be able to perform [`insert`](@ref) operations. It is very unlikely that you will have to add an additional `s3db` store because we already hard-code the production Datafeeds URI in the package as a centralized store.
-- `ffs` : [`DataClient.FFS`](@ref) is used for user-derived datasets where data is typically stored manually using the [`insert`](@ref) operation. Examples of this are personal S3 buckets or some shared S3 bucket that you have been given access to. When setting up your own `ffs`, it is fine to reuse the same bucket for multiple stores but __ensure that the bucket prefix for each store do not overlap.__ Each store must exist within an isolated 'space'.
+- `s3db` : [`DataClient.S3DB`](@ref) is used to represent storage locations (s3 buckets) that contain data (s3 files) that is transmuted by Datafeeds. This includes data that is copied directly from the Datafeeds or data that has undergone some transformations or conversions (eg. via [S3DBConverters](https://gitlab.invenia.ca/invenia/Datafeeds/S3DBConverter)). This store type is read-only thus users will not be able to perform [`insert`](@ref) operations. The purpose of this store is to allow users to read Datafeeds or Datafeeds-like data.
+- `ffs` : [`DataClient.FFS`](@ref) is DataClient's native storage implementation, where all operations are supported and all data contained in this store was initially inserted and formatted using DataClient's [`insert`](@ref) API. The purpose of this store is to be a database, where users get to store and retrieve data (using DataClient's APIs) as they would with a typical database system.
 
 The order in which you specify the additional stores is important because **this is the same order that the [`gather`](@ref) operation uses to search for datasets** when a store id is not provided.
+
+#### S3DB URI Scheme
+The first component of `FFS` store URIs always begins with `ffs:`, but this is not the case with `S3DB` store URIs.
+Given that DataClient has no control over how `S3DB` data is stored/formatted nor what metadata is made available, certain information about the store must be provided in the URI in order for data to be read/processed correctly. Specifically, the file format, compression, and partition size of the stored data must be baked into the URI.
+The following are some valid examples:
+* `s3db:`: A shorthand for `s3db-csv-gz-day`
+* `s3db-arrow-zst-day:`
+* `s3db-arrow-lz4-month:`
+* `s3db-csv-gz-year:`
+
+`S3DB` URIs must be in the format `s3db-format-compression-partition:`, where format, compression, and partition represents how the S3DB data is actually stored.
+
 
 ### Prioritizing Additional Stores over Centralized Stores
 If a store id is not provided when using the [`gather`](@ref) operation, the default behavior is to first check any hard-coded centralized stores before checking the user-defined `additional-stores`.
@@ -45,3 +57,8 @@ disable-centralized: True
 
 ### Cache Configs When Gathering Data
 Refer to [`gather`](@ref).
+
+
+[`DataClient.S3DB`](@ref) is used to represent storage locations (s3 buckets) that contain data (s3 files) that is transmuted by Datafeeds.
+This includes data that is copied directly from the Datafeeds or data that has undergone some transformations or conversions (eg. via [S3DBConverters](https://gitlab.invenia.ca/invenia/Datafeeds/S3DBConverter)).
+This store type is read-only thus you will not be able to perform [`insert`](@ref) operations.

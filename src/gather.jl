@@ -15,12 +15,13 @@ const _S3DB_NON_ID_COLS = [_S3DB_RELEASE_COL, :tag]
     gather(
         collection::AbstractString,
         dataset::AbstractString,
-        start_dt::ZonedDateTime,
-        end_dt::ZonedDateTime,
+        start_dt::Union{ZonedDateTime,UTCDateTime},
+        end_dt::Union{ZonedDateTime,UTCDateTime},
         [store_id::AbstractString,];
-        sim_now::Union{ZonedDateTime,Nothing}=nothing,
+        sim_now::Union{ZonedDateTime,UTCDateTime,Nothing}=nothing,
         filters::Union{Nothing,Dict{Symbol,<:AbstractVector}}=nothing,
         excludes::Union{Nothing,Dict{Symbol,<:AbstractVector}}=nothing,
+        dt_type::Type{<:Dates.AbstractDateTime}=ZonedDateTime,
         ntasks::Int=_GATHER_ASYNC_NTASKS,
     )::DataFrame
 
@@ -48,6 +49,9 @@ Gathers data from a target dataset as a `DataFrame`.
     when compared to just using the `sim_now` filter alone.
 - `excludes`: (Optional) This works in a similar but opposite way to the `filters` kwarg,
     it EXCLUDES any rows with matching column values.
+- `dt_type`: (Optional) The return type for datetime fields (`target_start`, `target_end`,
+    `release_date`) of S3DB data. This is only supported for [`S3DB`](@ref) stores. Options
+    are `ZonedDateTime` and `UTCDateTime`, with `ZonedDateTime` as the default.
 - `ntasks`: (Optional) The number of tasks to run concurrently when downloading and
     processing s3 files, defaults to $_GATHER_ASYNC_NTASKS. Each task is run using Threads.@spawn, so
     multi-threading will take effect if enabled. Setting this to 1 will disable asynchrony
@@ -96,11 +100,12 @@ default cache behaviour. Refer to [`AWSUtils.s3_cached_get`](@ref) and
 function gather(
     collection::AbstractString,
     dataset::AbstractString,
-    start::ZonedDateTime,
-    stop::ZonedDateTime;
-    sim_now::Union{ZonedDateTime,Nothing}=nothing,
+    start::Union{ZonedDateTime,UTCDateTime},
+    stop::Union{ZonedDateTime,UTCDateTime};
+    sim_now::Union{ZonedDateTime,UTCDateTime,Nothing}=nothing,
     filters::Union{Nothing,Dict{Symbol,<:AbstractVector}}=nothing,
     excludes::Union{Nothing,Dict{Symbol,<:AbstractVector}}=nothing,
+    dt_type::Type{<:Dates.AbstractDateTime}=ZonedDateTime,
     ntasks::Int=_GATHER_ASYNC_NTASKS,
 )::DataFrame
     # get_backend() returns an OrderedDict, i.e. the search order in configs.yaml
@@ -108,15 +113,16 @@ function gather(
         data = nothing
 
         try
-            data = _gather(
+            data = @mock _gather(
                 collection,
                 dataset,
-                start,
-                stop,
+                isa(start, UTCDateTime) ? ZonedDateTime(start) : start,
+                isa(stop, UTCDateTime) ? ZonedDateTime(stop) : stop,
                 store;
-                sim_now=sim_now,
+                sim_now=isa(sim_now, UTCDateTime) ? ZonedDateTime(sim_now) : sim_now,
                 filters=filters,
                 excludes=excludes,
+                dt_type=dt_type,
                 ntasks=ntasks,
             )
         catch err
@@ -134,24 +140,26 @@ end
 function gather(
     collection::AbstractString,
     dataset::AbstractString,
-    start_dt::ZonedDateTime,
-    end_dt::ZonedDateTime,
+    start_dt::Union{ZonedDateTime,UTCDateTime},
+    end_dt::Union{ZonedDateTime,UTCDateTime},
     store_id::AbstractString;
-    sim_now::Union{ZonedDateTime,Nothing}=nothing,
+    sim_now::Union{ZonedDateTime,UTCDateTime,Nothing}=nothing,
     filters::Union{Nothing,Dict{Symbol,<:AbstractVector}}=nothing,
     excludes::Union{Nothing,Dict{Symbol,<:AbstractVector}}=nothing,
+    dt_type::Type{<:Dates.AbstractDateTime}=ZonedDateTime,
     ntasks::Int=_GATHER_ASYNC_NTASKS,
 )::DataFrame
     store = get_backend(store_id)
-    data = _gather(
+    data = @mock _gather(
         collection,
         dataset,
-        start_dt,
-        end_dt,
+        isa(start_dt, UTCDateTime) ? ZonedDateTime(start_dt) : start_dt,
+        isa(end_dt, UTCDateTime) ? ZonedDateTime(end_dt) : end_dt,
         store;
-        sim_now=sim_now,
+        sim_now=isa(sim_now, UTCDateTime) ? ZonedDateTime(sim_now) : sim_now,
         filters=filters,
         excludes=excludes,
+        dt_type=dt_type,
         ntasks=ntasks,
     )
 
@@ -171,6 +179,7 @@ function _gather(
     sim_now::Union{ZonedDateTime,Nothing}=nothing,
     filters::Union{Nothing,Dict{Symbol,<:AbstractVector}}=nothing,
     excludes::Union{Nothing,Dict{Symbol,<:AbstractVector}}=nothing,
+    dt_type::Type{<:Dates.AbstractDateTime}=ZonedDateTime,
     ntasks::Int=_GATHER_ASYNC_NTASKS,
 )::DataFrame where {T}
     if !isnothing(sim_now) && !isa(store, S3DB)
@@ -207,6 +216,7 @@ function _gather(
         sim_now=sim_now,
         filters=filters,
         excludes=excludes,
+        dt_type=dt_type,
         ntasks=ntasks,
     )
     rtime = "($(s_fmt(t2)))"
@@ -270,6 +280,7 @@ function _load_s3_files(
     sim_now::Union{ZonedDateTime,Nothing}=nothing,
     filters::Union{Nothing,Dict{Symbol,<:AbstractVector}}=nothing,
     excludes::Union{Nothing,Dict{Symbol,<:AbstractVector}}=nothing,
+    dt_type::Type{<:Dates.AbstractDateTime}=ZonedDateTime,
     ntasks::Int=_GATHER_ASYNC_NTASKS,
 )::DataFrame where {T}
     to = TimerOutput()
@@ -297,7 +308,7 @@ function _load_s3_files(
 
     results = if !isempty(dfs)
         @timeit to "vcat dfs" df = vcat(dfs...)
-        @timeit to "df xform" _process_dataframe!(df, meta)
+        @timeit to "df xform" _process_dataframe!(df, meta; dt_type=dt_type)
         df
     else
         DataFrame()
@@ -370,17 +381,24 @@ function _load_s3_file(
     end
 end
 
-function _process_dataframe!(df::DataFrame, metadata::S3DBMeta)
+_unix_parser(::Type{ZonedDateTime}, m::S3DBMeta) = t::Int -> unix2zdt(t, m.timezone)
+_unix_parser(::Type{UTCDateTime}, m::S3DBMeta) = t::Int -> UTCDateTime(unix2datetime(t))
+
+function _process_dataframe!(
+    df::DataFrame, metadata::S3DBMeta; dt_type::Type{<:Dates.AbstractDateTime}=ZonedDateTime
+)
     # a very large proportion of zdts are identical
-    cache = Dict{Int,ZonedDateTime}()
-    cached_unix2zdt(ts::Int)::ZonedDateTime =
+    cache = Dict{Int,Dates.AbstractDateTime}()
+    unix_parser = _unix_parser(dt_type, metadata)
+
+    cached_unix_parser(ts::Int) =
         get!(cache, ts) do
-            unix2zdt(ts, metadata.timezone)
+            unix_parser(ts)
         end
 
     # convert unix datetimes to zdt
     for col in _S3DB_ZDT_COLS
-        df[!, col] = map(cached_unix2zdt, df[!, col])
+        df[!, col] = map(cached_unix_parser, df[!, col])
     end
 
     # decode 'list' types
@@ -402,7 +420,7 @@ function _process_dataframe!(df::DataFrame, metadata::S3DBMeta)
     return nothing
 end
 
-function _process_dataframe!(df::DataFrame, metadata::FFSMeta)
+function _process_dataframe!(df::DataFrame, metadata::FFSMeta; kwargs...)
     for (col_name, col_type) in metadata.column_types
         if col_type == ZonedDateTime
             df[!, col_name] = unix2zdt.(df[!, col_name], metadata.timezone)
