@@ -28,6 +28,8 @@ using TimeZones
 using TimeZones: zdt2unix
 using WeakRefStrings
 
+TimeZones.ZonedDateTime(zdt::ZonedDateTime) = zdt
+
 @testset "test src/common.jl" begin
     @testset "test enums" begin
         @test PartitionSize("HOUR") == HOUR

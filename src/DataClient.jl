@@ -13,6 +13,7 @@ using JSON
 using Memento
 using Memoize
 using Mocking
+using Parquet2
 using TimeZones
 using TimerOutputs
 using TranscodingStreams
