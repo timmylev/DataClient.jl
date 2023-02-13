@@ -87,3 +87,13 @@ function _write_df(df::AbstractDataFrame, ::Val{FileFormats.ARROW})::Vector{UInt
     Arrow.write(stream, df)
     return take!(stream)
 end
+
+## PARQUET reader / writer
+
+function _load_df(data, ::Val{FileFormats.PARQUET})::DataFrame
+    return DataFrame(Parquet2.Dataset(data); copycols=false)
+end
+
+function _write_df(df::AbstractDataFrame, ::Val{FileFormats.PARQUET})::Vector{UInt8}
+    return Parquet2.writefile(Vector{UInt8}, df; compression_codec=:snappy)
+end

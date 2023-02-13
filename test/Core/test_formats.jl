@@ -24,6 +24,23 @@ DT(args...) = DateTime(args...)
         end
     end
 
+    @testset "test parquet" begin
+        df = DataFrame(;
+            dt=[missing, DT(2020, 1, 1, 1), DT(2020, 1, 1, 2), DT(2020, 1, 1, 3)],
+            region=["region_A", "region_B", "region_C", "region_D"],
+            string_pairs=[missing, ["key1, val1"], ["key2, val2"], ["key3, val3"]],
+            int_vals=[missing, 1, 2, 3],
+            float_vals=[123.4, 456.7, 789.0, 889.4],
+            float_lists=[[1.2, 3.4], [5.6, 7.8], [9.8], [9.8, 8.5, 223.98]],
+            bool=[missing, true, false, false],
+        )
+
+        fmt = FileFormats.PARQUET
+        for com in [instances(FileFormats.Compression)..., nothing]
+            @test isequal(df, load_df(write_df(df, fmt, com), fmt, com))
+        end
+    end
+
     @testset "test csv: non-vector" begin
         df = DataFrame(;
             target_start=[1667433600, 1667347200, 1667260800],
