@@ -14,7 +14,7 @@ EOF
 See [Configs and Backend](@ref) for more details, but basically, `tim-personal` can be replaced with any meaningful identifier and the S3 URI replaced with your desired storage location (do not remove the `ffs:` URI prefix).
 
 ### Step 2: Obtaining a Processed Dataset using DataSoupParsers.jl
-Refer to [DataSoupParsers.jl](https://invenia.pages.invenia.ca/research/DataSoupParsers.jl/) for more info.
+Refer to [DataSoupParsers.jl](https://invenia.pages.invenia.ca/grid-behaviour/DataSoupParsers.jl/) for more info.
 ```julia
 julia> using DataSoupParsers
 julia> using Dates
